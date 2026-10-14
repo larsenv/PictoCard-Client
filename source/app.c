@@ -17,6 +17,7 @@
 #include "wiidata.h"
 #include "wiino.h"
 #include "outbox.h"
+#include "gallery.h"
 #include "cJSON.h"
 
 draft_t draft;
@@ -470,6 +471,12 @@ static void picked(int value)
     draft_changed();
 }
 
+/* letterhead gallery (filled in once the thumbnails arrive, see request_letterheads) */
+static image_t *lh_thumbs[128];
+static const char *lh_names[128], *lh_groups[128];
+static int lh_state;
+static void letterhead_picked(int value);
+
 static void open_picker(int id)
 {
     int n = 0;
@@ -511,6 +518,11 @@ static void open_picker(int id)
         sel = draft.doodle;
         break;
     case F_LETTERHEAD: {
+        if (lh_state == 2) {
+            gallery_open("Choose a letterhead", "Plain letter", lh_thumbs, lh_names, lh_groups,
+                         meta.letterhead_count < 128 ? meta.letterhead_count : 128, draft.letterhead, letterhead_picked);
+            return;
+        }
         title = "Letterhead";
         snprintf(pick_items[n].label, 96, "Default (plain letter)");
         pick_items[n].value = -1;
@@ -629,6 +641,49 @@ static void request_faces(void)
     char *body = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     if (body && !api_faces(body, faces_next)) faces_failed = 1;
+}
+
+/* Letterhead thumbnails for the gallery, fetched once as a single sheet. */
+static image_t *lh_thumbs[128];
+static const char *lh_names[128], *lh_groups[128];
+static int lh_state; /* 0 not asked, 1 asked, 2 loaded, -1 unavailable (the list is used) */
+
+static void request_letterheads(void)
+{
+    if (lh_state || api.busy || !meta.loaded || !meta.letterhead_count || draft.method != 1) return;
+    lh_state = api_letterheads(120, 88, 8) ? 1 : -1;
+}
+
+static void letterheads_loaded(void)
+{
+    image_t *sheet = api.sheet;
+    api.sheet = NULL;
+    if (!api.ok || !sheet || api.sheet_w <= 0 || api.sheet_h <= 0 || api.sheet_cols <= 0) {
+        image_free(sheet);
+        lh_state = -1;
+        return;
+    }
+    int n = meta.letterhead_count < api.sheet_count ? meta.letterhead_count : api.sheet_count;
+    for (int i = 0; i < n && i < 128; i++) {
+        int sx = (i % api.sheet_cols) * api.sheet_w, sy = (i / api.sheet_cols) * api.sheet_h;
+        if (sx + api.sheet_w > sheet->w || sy + api.sheet_h > sheet->h) break;
+        image_t *t = image_new(api.sheet_w, api.sheet_h);
+        if (!t) break;
+        for (int y = 0; y < t->h; y++) memcpy(t->px + y * t->w, sheet->px + (sy + y) * sheet->w + sx, t->w * 4);
+        lh_thumbs[i] = t;
+    }
+    image_free(sheet);
+    for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
+        lh_names[i] = meta.letterheads[i].name;
+        lh_groups[i] = meta.letterheads[i].group;
+    }
+    lh_state = 2;
+}
+
+static void letterhead_picked(int value)
+{
+    draft.letterhead = value;
+    draft_changed();
 }
 
 static void request_preview(void)
@@ -987,7 +1042,9 @@ static void draw_preview_panel(int x, int y, int w, int h)
 
 static void draw_compose(void)
 {
-    hero("Send a PictoCard!", "Create a personalized greeting card and send it by email. Or send a special note to a Wii Message Board with WiiLink!");
+    /* the hero stays over the form so the live preview can use the full height */
+    text_draw(FONT_BOLD, 24, 24, 72, T.text, "Send a PictoCard!");
+    text_draw_fit(FONT_REGULAR, 13, 24, 104, LW, T.muted, "Make a card and send it by email or to a Wii Message Board.");
     int oy = LY - scroll;
     gfx_clip(LX - 6, LY - 4, LW + 12, LH + 8);
     for (int p = 0; p < 3; p++) {
@@ -1002,9 +1059,9 @@ static void draw_compose(void)
     if (scroll > 0) for (int i = 0; i < 10; i++) gfx_fill_alpha(LX - 6, LY - 4 + i, LW + 12, 1, T.bg, 230 - i * 22);
     if (scroll < content_h - LH) for (int i = 0; i < 10; i++) gfx_fill_alpha(LX - 6, LY + LH + 3 - i, LW + 12, 1, T.bg, 230 - i * 22);
 
-    int ph = LH - 50;
-    draw_preview_panel(RX, LY, RW, ph);
-    ui_button(RX, LY + ph + 10, RW, 40, "Review your card ->", 1, focus == F_REVIEW, 0);
+    int py = 64, ph = LY + LH - 50 - py;
+    draw_preview_panel(RX, py, RW, ph);
+    ui_button(RX, py + ph + 10, RW, 40, "Review your card ->", 1, focus == F_REVIEW, 0);
 
     static const char *const hints[] = { "A", "Select", "<>", "Change", "+", "Review", "1 2", "Steps", "HOME", "Exit" };
     ui_footer_hints(hints, 5);
@@ -1536,6 +1593,10 @@ static void handle_finished(void)
         }
         return;
     }
+    if (job == JOB_LETTERHEADS) {
+        letterheads_loaded();
+        return;
+    }
     if (job == JOB_FACES) {
         for (int i = 0; i < api.face_count; i++) {
             int m = api.face_first + i;
@@ -1649,6 +1710,7 @@ void app_run(void)
         }
 
         if (osk_active()) osk_update(&in);
+        else if (gallery_active()) gallery_update(&in);
         else if (picker_active()) picker_update(&in);
         else if (files_active()) files_update(&in);
         else if (doodle_active()) doodle_update(&in);
@@ -1671,7 +1733,7 @@ void app_run(void)
             case SCR_DONE: done_update(&in); break;
             }
         }
-        if ((in.down & BTN_MINUS) && !osk_active() && !picker_active() && !files_active() && !doodle_active() && !busy_modal &&
+        if ((in.down & BTN_MINUS) && !osk_active() && !gallery_active() && !picker_active() && !files_active() && !doodle_active() && !busy_modal &&
             screen != SCR_COMPOSE && screen != SCR_CONNECT)
             activate(F_THEME);
         if (alert_frames > 0 && (in.down & ~BTN_DIRS) && !busy_modal) alert_frames = alert_frames > 60 ? 60 : alert_frames;
@@ -1684,6 +1746,8 @@ void app_run(void)
         /* Mii faces go last so the live preview always comes first */
         if (screen == SCR_COMPOSE && !api.busy && !pending_review && (version == preview_version || requested_version == version))
             request_faces();
+        if (screen == SCR_COMPOSE && !api.busy && !pending_review && (version == preview_version || requested_version == version))
+            request_letterheads();
 
         build_widgets();
         if (!find(focus) && screen == SCR_COMPOSE && focus != F_REVIEW) focus = F_METHOD;
@@ -1716,6 +1780,7 @@ void app_run(void)
             ui_alert(x, y, w, alert_text, alert_error);
         }
         if (osk_active()) osk_draw(frame);
+        else if (gallery_active()) gallery_draw(frame);
         else if (picker_active()) picker_draw(frame);
         else if (files_active()) files_draw(frame);
         else if (doodle_active()) doodle_draw(frame);

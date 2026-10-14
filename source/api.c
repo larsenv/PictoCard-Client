@@ -150,6 +150,28 @@ static int do_faces(char *body)
     return 1;
 }
 
+static int do_letterheads(char *body)
+{
+    api.stage = STAGE_WAITING;
+    cJSON *json = call("POST", "letterhead-sheet", body, strlen(body), NULL);
+    if (!json) return 0;
+    const cJSON *img = cJSON_GetObjectItemCaseSensitive(json, "image");
+    const cJSON *ids = cJSON_GetObjectItemCaseSensitive(json, "ids");
+    api.sheet_w = cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "w"));
+    api.sheet_h = cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "h"));
+    api.sheet_cols = cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "cols"));
+    api.sheet_count = cJSON_GetArraySize(ids);
+    api.sheet = NULL;
+    if (cJSON_IsString(img)) {
+        size_t len;
+        unsigned char *data = base64_decode(img->valuestring, &len);
+        if (data) api.sheet = image_decode(data, len, 2048);
+        free(data);
+    }
+    cJSON_Delete(json);
+    return api.sheet != NULL;
+}
+
 /* ── Proof of work ───────────────────────────────────────────────────────── */
 
 /* Fetch a challenge for `purpose` and solve it; fills pow_json with
@@ -258,6 +280,7 @@ static void *run(void *arg)
     case JOB_VERIFY: ok = do_verify(current.arg1, current.arg2); break;
     case JOB_FRIEND: ok = do_friend(current.arg1); break;
     case JOB_FACES: ok = do_faces(current.body); break;
+    case JOB_LETTERHEADS: ok = do_letterheads(current.body); break;
     }
     free(current.body);
     current.body = NULL;
@@ -308,6 +331,14 @@ int api_preview(char *body) { return start(JOB_PREVIEW, body, NULL, NULL); }
 int api_send(char *body) { return start(JOB_SEND, body, NULL, NULL); }
 int api_verify(const char *ticket, const char *code) { return start(JOB_VERIFY, NULL, ticket, code); }
 int api_friend(const char *number) { return start(JOB_FRIEND, NULL, number, NULL); }
+int api_letterheads(int w, int h, int cols)
+{
+    char *body = malloc(64);
+    if (!body) return 0;
+    snprintf(body, 64, "{\"width\":%d,\"height\":%d,\"cols\":%d}", w, h, cols);
+    return start(JOB_LETTERHEADS, body, NULL, NULL);
+}
+
 int api_faces(char *body, int first)
 {
     int ok = start(JOB_FACES, body, NULL, NULL);

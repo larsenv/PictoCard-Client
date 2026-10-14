@@ -25,7 +25,7 @@ typedef struct {
     int expression_count;
 } meta_t;
 
-enum { JOB_NONE, JOB_CONNECT, JOB_PREVIEW, JOB_SEND, JOB_VERIFY, JOB_FRIEND, JOB_FACES };
+enum { JOB_NONE, JOB_CONNECT, JOB_PREVIEW, JOB_SEND, JOB_VERIFY, JOB_FRIEND, JOB_FACES, JOB_LETTERHEADS };
 enum { STAGE_IDLE, STAGE_NETWORK, STAGE_CHALLENGE, STAGE_SOLVING, STAGE_UPLOADING, STAGE_WAITING, STAGE_DONE };
 
 typedef struct {
@@ -48,6 +48,8 @@ typedef struct {
     int face_count;
     int face_first;            /* index of the first Mii in the request */
     char ip[20];
+    image_t *sheet;            /* letterhead thumbnails in one grid, owned by the UI once finished */
+    int sheet_w, sheet_h, sheet_cols, sheet_count;
 } api_state_t;
 
 extern meta_t meta;
@@ -62,3 +64,5 @@ int api_verify(const char *ticket, const char *code);
 int api_friend(const char *wii_number);
 /* body: {"miis":[base64...]}; the faces for Miis first.. come back in api.faces */
 int api_faces(char *body, int first);
+/* all letterhead thumbnails (w x h each) as one grid in api.sheet, in meta.letterheads order */
+int api_letterheads(int w, int h, int cols);

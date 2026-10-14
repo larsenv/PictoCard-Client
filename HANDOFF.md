@@ -3,7 +3,7 @@
 Working notes for whoever picks this up next. Keep this file current: update the
 **Status** and **Next steps** sections whenever work lands, and move finished items down to **Done**.
 
-Last updated: 2026-10-14
+Last updated: 2026-10-14 (end of session 1)
 
 Repos (both owned by `larsenv`, commit and push as `larsenv`):
 
@@ -26,11 +26,26 @@ Repos (both owned by `larsenv`, commit and push as `larsenv`):
 | Site tweaks | "New" badge removed; Wii page: thicker image borders, "The Wii app, not the website" captions, title case | Visual |
 | Message Board pictures: list, preview, VFF reader | `source/mb.c`, `source/odh.cpp` (AJPG decoder from cdbackup), `source/aes.c`, `source/libpatcher.c` | Dolphin with a crafted `cdb.vff` (list, dates, newest first, JPEG preview). The AJPG/ODH path is **not** tested yet |
 
-### In progress
+### In progress (resume here)
 
-- Message Board pick is verified in Dolphin (the picture shows in the field and the live preview).
-- Card picture source: with Wii attachment "PictoCard" the picture field asks "Where is the picture?" (SD/USB or Message Board).
-  Compiles; not yet tried in Dolphin. The website/email path still uses the file browser only.
+1. **Removing Wii sending from the website** (the user's decision: Wii sending lives only in the app; drop the WiiLink note).
+   Work is in `/Volumes/SSD/larsen/Documents/Git/PictoCard`, **uncommitted and not pushed** on purpose (a push deploys the site via the webhook and the tests are not updated yet).
+   Done so far:
+   - `routes/index.js`: all Wii paths removed from `/create`, `/card-preview`, `/preview`, `/verify-request`, `/verify` (`createWiiPending`, `readWiiMii`, Wii imports, FAQ wording). Module loads.
+   - `views/index.ejs`: Wii tab/panel, Wii scripts and `applyWiiMode` (now `applyCardType`) removed. `views/preview.ejs`, `views/verify.ejs` cleaned.
+   - `public/js/editor.js` cleaned of Wii preview logic; dead Wii CSS removed from `public/css/main.css`.
+   - Deleted: `routes/wii.js` (the `/wii` friend-request page), `views/wii.ejs`, `views/partials/wii-preview.ejs`, `public/js/wii-preview.js`, `public/js/wii-mii-face.js`, `tests/wii-preview.cjs`; `server.js` no longer mounts `/wii` or lists it in the sitemap.
+   - `views/wii-app.ejs` and `views/tos.ejs`: WiiLink wording and the `/wii` link removed.
+   Kept on purpose: the JSON API (`routes/api.js`, used by the app, including `/friend`, `/mii-faces`, picture-only mail), `lib/wc24.js` polling (`startWc24`), the Wii opt-out page, `/wii-app`.
+   Still to do: `views/partials/head.ejs` (keywords, JSON-LD description and featureList mention Wii Message Board/WiiConnect24), `public/llms.txt`, `views/index.ejs` meta description (`Wii Message Board` already removed from hero, check `metaDescription`), `views/privacy.ejs` line about Wii face previews, then **fix tests**: `tests/editor.spec.js` (46 Wii refs), `tests/backend.cjs` (44), `tests/api.cjs`, `tests/e2e.spec.js`; run `npm run test:unit` and the Playwright specs one at a time; then commit and push as `larsenv` (`git push git@github.com:larsenv/PictoCard.git main`).
+2. **Friend list / mailbox, by disassembling Nintendo's tool.** The user supplied
+   `/Volumes/SSD/dlz/Folders/wii_development_package/RevoEX-2_4-090609/RevoEX/RVL/bin/tools/NWC24Editor.elf`
+   (32-bit PowerPC big-endian, statically linked, **not stripped**, so symbol names are present). Goal: learn the exact layout of
+   `/shared2/wc24/nwc24fl.bin` (friend list) and the mailbox (`/shared2/wc24/mbox`, `nwc24msg.cfg`, `misc.bin`, `dlcnt.bin`), to add proper friend-list reading in the app (pick a friend to send to) and correct mailbox sending.
+   Useful symbols found in strings: `NWC24GetNumFriendInfos`, `NWC24CheckFriendInfo`, `NWC24WriteFriendInfo`, `NWC24DeleteFriendInfo`, `NWC24SwapFriendInfos`, `NWC24iEstablishFriendInfo`, `NWC24ReadMsgFromAddr`, `NWC24ReadMsgToAddr`, `NWC24SetMsgToAddr`; sources `Friend.cpp`, `FriendListWindow.cpp`.
+   Tooling: `/opt/devkitpro/devkitPPC/bin/powerpc-eabi-objdump` works (`-d` or `--disassemble=<symbol>`); Ghidra/rea MCP tools exist but the user wants them only on request (they did ask for a disassembly here). Nothing disassembled yet.
+   Known so far: `nwc24fl.bin` magic `WcFl`, version 2, up to 100 entries; friend codes are 64-bit big-endian values near the start; the Dolphin NAND copy has no friends.
+3. Message Board pick flow verified in Dolphin. Card-picture source choice (SD/USB or Message Board for the PictoCard picture, attach = PictoCard) is built and pushed but **not yet exercised in Dolphin**.
 - Message Board entries are listed by date and time only, because Message Board photos have no names.
 
 ### Next steps (asked for, not started)
@@ -39,7 +54,7 @@ Repos (both owned by `larsenv`, commit and push as `larsenv`):
    Add a picture-source choice for the card picture (SD/USB file browser vs Message Board) next to `F_PICTURE`. Keep optimising the
    JPEGs: `store_picture()` in `app.c` re-encodes (quality 88, max 1600 px); the server (`wiiMail.toBaselineJpeg`) makes the final
    small baseline JPEG for the Wii. Consider capping the upload at about 1280 px.
-2. **Read the Wii's friends from its address book and send to them.** The friend list is `/shared2/wc24/nwc24fl.bin`
+2. **(Now in progress, see above) Read the Wii's friends from its address book and send to them.** The friend list is `/shared2/wc24/nwc24fl.bin`
    (magic `WcFl`, version 2, max 100 entries; friend codes are 64-bit big-endian values near the start). The copy in the Dolphin NAND
    has no friends, so the entry layout (nicknames, Mii data) could not be checked. The `wii_development_package`
    (`/Volumes/SSD/larsen/Downloads/wii_development_package`) has only a stub `NWC24Mini.h`; there is no documentation of the file in it.

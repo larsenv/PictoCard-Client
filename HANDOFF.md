@@ -41,15 +41,14 @@ Still to do for A: `views/partials/head.ejs` (meta keywords, JSON-LD description
 `npm run test:unit` and one Playwright spec at a time; then commit as `larsenv` and `git push git@github.com:larsenv/PictoCard.git main`.
 Do NOT remove `lib/wc24.js`, `lib/wiiMail.js`, `lib/wiiPreview.js` or `startWc24()`: the API (`routes/api.js`) still uses them.
 
-**B. Friend list and mailbox from the real firmware (asked, just started).** The user pointed at
-`/Volumes/SSD/dlz/Folders/wii_development_package/RevoEX-2_4-090609/RevoEX/RVL/bin/tools/NWC24Editor.elf` (ELF32 big-endian PowerPC, not stripped, 7 MB)
-to learn the true layouts. Disassemble it (devkitPPC has `/opt/devkitpro/devkitPPC/bin/powerpc-eabi-objdump`; Ghidra MCP `ghydra` is on demand only).
-Symbols seen with `strings`: `NWC24GetNumFriendInfos`, `NWC24CheckFriendInfo`, `NWC24DeleteFriendInfo`, `NWC24WriteFriendInfo`,
-`NWC24SwapFriendInfos`, `NWC24iEstablishFriendInfo`, `NWC24ReadMsgFromAddr`, `NWC24ReadMsgToAddr`, `NWC24SetMsgToAddr`, source names
-`Friend.cpp`, `FriendListWindow.cpp`; paths `/shared2/wc24/nwc24fl.bin`, `nwc24fls.bin`, `nwc24dl.bin`, `nwc24msg.cfg`, `misc.bin`, `mbox/dlcnt.bin`.
-Goal: (1) the exact `nwc24fl.bin` entry layout (header, per-entry friend code, nickname, status, Mii) so the app can list friends and
-send to them (codes must still pass `wiino_valid`); (2) how the mailbox (`/shared2/wc24/mbox`) is written so the app could deliver properly.
-Start with `objdump -d --start-address` around `NWC24WriteFriendInfo` / `NWC24GetNumFriendInfos` / `NWC24CheckFriendInfo`.
+**B. Friend list and mailboxes (tools done, app side not started).** `tools/nwc24/nwc24.py` writes `nwc24fl.bin`, `nwc24msg.cfg`
+(number, password, mail server URLs) and the receive and send boxes (`wc24{recv,send}.{ctl,mbx}`). All of it was checked with the RevoEX
+NWC24Editor in Dolphin (re-signed WAD); see `tools/nwc24/README.md` for formats, steps and screenshots (`docs/nwc24/`). `sendcgi.py` catches
+send-box posts locally. Open items:
+- Dolphin reads the 2 MiB send-box VFF as FAT16 while the library writes FAT12, so outgoing letters over 512 bytes fail in Dolphin
+  (fix belongs in Dolphin `VFFUtil.cpp read_vff_header`). Single-cluster letters reach `send.cgi`.
+- Not yet checked: does the Wii Menu import host-written inbox letters into `cdb.vff`? (test profile reached the System Menu "Press A" screen).
+- App: read `nwc24fl.bin` in `wiidata.c` (layout in the README) and offer friends as recipients; optionally queue letters in the send box.
 
 - Card picture source (SD/USB vs Message Board) for the PictoCard: committed and pushed, compiles, not yet tried in Dolphin.
 - Message Board entries are listed by date and time only, because Message Board photos have no names.

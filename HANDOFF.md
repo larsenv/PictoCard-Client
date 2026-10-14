@@ -74,6 +74,9 @@ send-box posts locally. Open items:
 5. Website: the Wii app page screenshots (`public/images/wii-app/*.png`) predate the doodle, Mii picker and Message Board
    features; retake them with the Dolphin harness.
 6. Real hardware testing for: USB mouse, Message Board access (needs the AHBPROT/ISFS patches from libpatcher; Dolphin skips them).
+   Opening Message Board pictures froze a real Wii: `scan_nand()` reloaded IOS (`patch_ahbprot_reset`) with WPAD, network and USB
+   running. It now patches ISFS permissions in the running IOS (`patch_isfs_permissions_in_place`) and only with AHB access
+   (`ahbprot_disabled()`); without it the picker shows an error. Needs a retest on hardware.
 
 ## How to build and test
 

@@ -15,5 +15,10 @@ bool patch_isfs_permissions();
 bool patch_es_identify();
 bool patch_ios_verify();
 
+// True when the Homebrew Channel started the app with AHB access (or in Dolphin).
+bool ahbprot_disabled();
+// Opens up NAND permissions in the running IOS without reloading it.
+bool patch_isfs_permissions_in_place();
+
 // Applies all patches.
 bool apply_patches();

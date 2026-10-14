@@ -246,9 +246,14 @@ static void scan_nand(void)
 {
     static int patched;
     if (!patched) {
-        patched = 1;
         /* the Message Board data is readable only with the NAND permissions opened up */
-        if (patch_ahbprot_reset()) patch_isfs_permissions();
+        if (!ahbprot_disabled()) {
+            snprintf(error_text, sizeof error_text,
+                     "Reading the Message Board needs AHB access. Start PictoCard from the Homebrew Channel's list of apps.");
+            return;
+        }
+        patched = 1;
+        patch_isfs_permissions_in_place();
     }
     if (ISFS_Initialize() < 0) {
         snprintf(error_text, sizeof error_text, "Could not open the Wii's NAND.");

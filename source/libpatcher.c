@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "libpatcher.h"
 #include "patches.h"
 
 #define HW_AHBPROT 0x0d800064
@@ -114,6 +115,21 @@ bool patch_ahbprot_reset() {
     }
 
     return patch_ahbprot_reset_for_ver(current_ios);
+}
+
+bool ahbprot_disabled() { return is_dolphin() || AHBPROT_DISABLED; }
+
+// Patches the running IOS in place, without IOS_ReloadIOS. A reload would take
+// the Wii Remotes, network and USB down with it while the app is running.
+bool patch_isfs_permissions_in_place() {
+    if (is_dolphin()) {
+        return true;
+    }
+    if (!AHBPROT_DISABLED) {
+        return false;
+    }
+    disable_memory_protections();
+    return patch_isfs_permissions();
 }
 
 bool patch_isfs_permissions() {

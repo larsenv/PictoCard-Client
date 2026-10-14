@@ -825,7 +825,7 @@ static void layout_columns(void)
     LX = 24;
     LY = 132;
     LH = SH - 46 - LY;
-    LW = (SW - 48 - 16) * 57 / 100;
+    LW = (SW - 48 - 16) / 2;
     RX = LX + LW + 16;
     RW = SW - 24 - RX;
 }
@@ -928,16 +928,16 @@ static const char *TITLES[3] = { "Who is it for?", "Your picture", "Your message
 static void draw_preview_panel(int x, int y, int w, int h)
 {
     int top = ui_panel(x, y, w, h, NULL, "Live preview");
-    int sx = x + 1, sy = top, sw = w - 2, sh = h - (top - y) - 64;
+    int sx = x + 1, sy = top, sw = w - 2, sh = h - (top - y) - 40;
     gfx_fill(sx, sy, sw, sh, T.bg2);
     gfx_grid(sx, sy, sw, sh, 14, T.grid);
     image_t *src = draft.method == 1 && preview_letters ? preview_letter[0] : preview_card;
     if (src) {
-        if (!preview_fit_card || fit_for_w != sw - 24 || fit_for_h != sh - 24 || fit_letter_page != (src == preview_card ? -2 : 0)) {
+        if (!preview_fit_card || fit_for_w != sw - 12 || fit_for_h != sh - 12 || fit_letter_page != (src == preview_card ? -2 : 0)) {
             image_free(preview_fit_card);
-            preview_fit_card = image_fit(src, sw - 24, sh - 24);
-            fit_for_w = sw - 24;
-            fit_for_h = sh - 24;
+            preview_fit_card = image_fit(src, sw - 12, sh - 12);
+            fit_for_w = sw - 12;
+            fit_for_h = sh - 12;
             fit_letter_page = src == preview_card ? -2 : 0;
         }
         image_t *im = preview_fit_card;
@@ -956,9 +956,9 @@ static void draw_preview_panel(int x, int y, int w, int h)
     }
     gfx_fill(sx, sy + sh, sw, 1, T.input_border);
     const char *cap = preview_error[0] ? preview_error
-        : draft.method == 1 ? "This is the letter they'll see on the Wii Message Board. You'll review everything before sending."
-        : "This is the card image they'll receive. You'll review everything before sending.";
-    ui_wrapped(FONT_REGULAR, 12, x + 14, sy + sh + 8, w - 28, preview_error[0] ? T.danger : T.muted, cap, 3);
+        : draft.method == 1 ? "The letter they'll see on the Wii Message Board."
+        : "The card image they'll receive.";
+    ui_wrapped(FONT_REGULAR, 12, x + 14, sy + sh + 6, w - 28, preview_error[0] ? T.danger : T.muted, cap, 2);
 }
 
 static void draw_compose(void)
@@ -978,10 +978,9 @@ static void draw_compose(void)
     if (scroll > 0) for (int i = 0; i < 10; i++) gfx_fill_alpha(LX - 6, LY - 4 + i, LW + 12, 1, T.bg, 230 - i * 22);
     if (scroll < content_h - LH) for (int i = 0; i < 10; i++) gfx_fill_alpha(LX - 6, LY + LH + 3 - i, LW + 12, 1, T.bg, 230 - i * 22);
 
-    int ph = LH - 76;
+    int ph = LH - 50;
     draw_preview_panel(RX, LY, RW, ph);
-    ui_button(RX, LY + ph + 14, RW, 40, "Review your card ->", 1, focus == F_REVIEW, 0);
-    text_draw_center(FONT_REGULAR, 12, RX, LY + ph + 58, RW, T.muted, "Nothing is sent until you confirm.");
+    ui_button(RX, LY + ph + 10, RW, 40, "Review your card ->", 1, focus == F_REVIEW, 0);
 
     static const char *const hints[] = { "A", "Select", "<>", "Change", "+", "Review", "1 2", "Steps", "HOME", "Exit" };
     ui_footer_hints(hints, 5);
@@ -1035,7 +1034,7 @@ static void jump_panel(int dir)
 
 static int widget_at(int px, int py, widget_t **out)
 {
-    if (px >= RX && px < RX + RW && py >= LY + LH - 62 && py < LY + LH - 22) {
+    if (px >= RX && px < RX + RW && py >= LY + LH - 40 && py < LY + LH) {
         *out = NULL;
         return F_REVIEW;
     }
@@ -1113,10 +1112,13 @@ static void compose_update(input_t *in)
     }
     if (in->down & BTN_MINUS) activate(F_THEME);
 
-    /* pointing near the column's top or bottom edge scrolls it */
-    if (in->pointer && in->px >= LX && in->px < LX + LW) {
-        if (in->py >= LY - 20 && in->py < LY + 18) scroll_target -= 8;
-        if (in->py > LY + LH - 18 && in->py < LY + LH + 30) scroll_target += 8;
+    /* pointing into the column's top or bottom band scrolls it, slowly at first
+     * and faster closer to (or past) the edge */
+    if (in->pointer && in->px >= LX - 6 && in->px < LX + LW + 6) {
+        const int band = 48;
+        int up = LY + band - in->py, down = in->py - (LY + LH - band);
+        if (up > 0 && in->py >= LY - 40) scroll_target -= 1 + (up > band ? band : up) / 8;
+        if (down > 0 && in->py < LY + LH + 40) scroll_target += 1 + (down > band ? band : down) / 8;
         if (scroll_target < 0) scroll_target = 0;
         if (scroll_target > content_h - LH) scroll_target = content_h - LH > 0 ? content_h - LH : 0;
     }

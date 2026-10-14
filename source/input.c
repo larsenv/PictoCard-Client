@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <ogc/usb.h>
+#include <ogc/usbmouse.h>
 #include <wiikeyboard/usbkeyboard.h>
 #ifdef HAVE_WIIDRC
 #include <wiidrc/wiidrc.h>
@@ -21,6 +22,11 @@ static int canvas_w = 640, canvas_h = 480;
 static int last_px = -1000, last_py = -1000;
 static u32 prev_dirs;
 static int dir_frames;
+
+/* USB mouse: a relative-motion pointer. Left = A, right = B, middle = +, wheel = Up/Down. */
+static int mouse_x = 320, mouse_y = 240;
+static int mouse_active;
+static u8 mouse_prev_buttons;
 
 #ifdef HAVE_SICKSAXIS
 static struct ss_device ds3;
@@ -252,6 +258,7 @@ void input_init(void)
     WiiDRC_Init();
 #endif
     USB_Initialize();
+    MOUSE_Init();
 #ifdef HAVE_SICKSAXIS
     if (ss_init() >= 0 && ss_initialize(&ds3) >= 0) {
         ds3_initialized = 1;
@@ -274,6 +281,7 @@ void input_shutdown(void)
 {
     kbd_thread_should_run = false;
     usleep(400);
+    MOUSE_Deinit();
     USBKeyboard_Close();
     USBKeyboard_Deinitialize();
     if (kbd_thread_hndl != LWP_THREAD_NULL) LWP_JoinThread(kbd_thread_hndl, NULL);
@@ -344,6 +352,49 @@ void input_poll(input_t *in)
         held |= stick_dirs(PAD_StickX(chan), PAD_StickY(chan), 45);
     }
 
+    u32 wheel_dirs = 0;
+    int mouse_moved = 0;
+    {
+        mouse_event me;
+        u8 buttons = mouse_prev_buttons;
+        while (MOUSE_GetEvent(&me)) {
+            if (me.rx || me.ry) {
+                mouse_x += me.rx * 2;
+                mouse_y += me.ry * 2;
+                mouse_moved = 1;
+            }
+            if (me.rz > 0) wheel_dirs = BTN_DOWN;
+            else if (me.rz < 0) wheel_dirs = BTN_UP;
+            buttons = me.button;
+        }
+        if (mouse_x < 0) mouse_x = 0;
+        if (mouse_y < 0) mouse_y = 0;
+        if (mouse_x >= canvas_w) mouse_x = canvas_w - 1;
+        if (mouse_y >= canvas_h) mouse_y = canvas_h - 1;
+        u32 mh = 0;
+        if (buttons & 1) mh |= WPAD_BUTTON_A;
+        if (buttons & 2) mh |= WPAD_BUTTON_B;
+        if (buttons & 4) mh |= WPAD_BUTTON_PLUS;
+        u32 prevh = 0;
+        if (mouse_prev_buttons & 1) prevh |= WPAD_BUTTON_A;
+        if (mouse_prev_buttons & 2) prevh |= WPAD_BUTTON_B;
+        if (mouse_prev_buttons & 4) prevh |= WPAD_BUTTON_PLUS;
+        down |= mh & ~prevh;
+        held |= mh;
+        mouse_prev_buttons = buttons;
+        if (mouse_moved || (mh & ~prevh)) mouse_active = 1;
+        if (!MOUSE_IsConnected()) mouse_active = 0;
+        if (!in->pointer && mouse_active) {
+            in->pointer = 1;
+            in->px = mouse_x;
+            in->py = mouse_y;
+        } else if (in->pointer) {
+            mouse_x = in->px; /* hand over smoothly between Wii Remote and mouse */
+            mouse_y = in->py;
+            if (mouse_moved) mouse_active = 1;
+        }
+    }
+
     /* Directions: a new press fires at once, then repeats while held. */
     u32 dirs = held & BTN_DIRS;
     u32 fresh = (dirs & ~prev_dirs) | (down & BTN_DIRS);
@@ -352,7 +403,7 @@ void input_poll(input_t *in)
     if (dir_frames >= REPEAT_DELAY && (dir_frames - REPEAT_DELAY) % REPEAT_RATE == 0) fresh |= dirs;
     prev_dirs = dirs;
 
-    in->down = (down & ~BTN_DIRS) | fresh;
+    in->down = (down & ~BTN_DIRS) | fresh | wheel_dirs;
     in->held = held;
 
     if (in->pointer) {

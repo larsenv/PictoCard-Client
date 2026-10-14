@@ -15,6 +15,7 @@
 #include "util.h"
 #include "version.h"
 #include "wiidata.h"
+#include "wiino.h"
 #include "cJSON.h"
 
 draft_t draft;
@@ -508,6 +509,7 @@ static const char *validate(void)
     } else {
         if (!meta.wii_enabled) return "Wii delivery isn't set up yet. Please check back soon.";
         if (strlen(draft.recipient_wii) != 16) return "Enter the 16-digit Wii Number.";
+        if (!wiino_valid(draft.recipient_wii)) return "That Wii Number doesn't look right. Please check it for typos.";
         if (!draft.message[0]) return "A message is required for Wii mail.";
         if (draft.attach && !draft.picture_jpeg) return "Please choose a picture to attach.";
     }

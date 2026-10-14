@@ -13,7 +13,7 @@ To receive letters, a Wii adds PictoCard as a friend once. The app can send that
 
 ## Controls
 
-Every controller GlowWii supports works here, plus the Wii Remote pointer and a USB keyboard:
+Every controller GlowWii supports works here, plus the Wii Remote pointer, a USB mouse and a USB keyboard:
 
 | Controller | Select | Back | Review / Done | Shift / Theme | Steps / Symbols |
 | --- | --- | --- | --- | --- | --- |
@@ -23,7 +23,7 @@ Every controller GlowWii supports works here, plus the Wii Remote pointer and a 
 | Wii U GamePad (Wii U vWii, patched fw.img) | A | B | + or R | − or L | Y / X |
 | DualShock 3 (USB) | ✕ | ○ | Start or R1 | Select or L1 | □ / △ |
 
-Analog sticks move like the D-Pad. On a USB keyboard you can type straight into any field; arrows, Enter, Tab, Esc and Backspace work as you'd expect. HOME (PS on a DualShock 3, Start on a GameCube controller) exits to the Homebrew Channel.
+A USB mouse moves the pointer; left click selects, right click goes back, middle click is Review / Done, and the wheel scrolls. Analog sticks move like the D-Pad. On a USB keyboard you can type straight into any field; arrows, Enter, Tab, Esc and Backspace work as you'd expect. HOME (PS on a DualShock 3, Start on a GameCube controller) exits to the Homebrew Channel.
 
 Photos can be JPEG (rotated using their EXIF orientation), PNG, WebP, GIF or BMP. They are resized on the Wii before uploading.
 
@@ -54,6 +54,8 @@ Every push to `main` builds the app on GitHub Actions and updates the `latest` r
 ## How it works
 
 The app talks to PictoCard's JSON API (`/api/v1`) over HTTPS (mbedTLS, with the root certificates in `source/certs.h`). The server renders the cards, so previews look exactly like the website's. Because a captcha can't run on a Wii, sends are protected by a proof-of-work challenge the Wii solves (a few seconds of SHA-256), plus rate limits, moderation and opt-outs on the server; emailed cards still need the code sent to your own address.
+
+Wii Numbers are checked with the same checksum a real Wii's number carries (as in RiiConnect24's wiino), so typos are caught before anything is sent.
 
 Your Miis come from the Mii Channel database and the Wii Number from the WiiConnect24 configuration, read from the Wii's NAND.
 

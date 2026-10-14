@@ -58,10 +58,21 @@ jobs:
           files: |
             dist/PictoCard-Wii.zip
             PictoCard.dol
+      # Notes come from docs/releases/<tag>.md when there is one.
+      - name: Release notes
+        if: github.ref_type == 'tag'
+        run: |
+          f="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$f" ]; then
+            mkdir -p docs/releases
+            echo "Extract PictoCard-Wii.zip to the root of your SD card or USB drive and open PictoCard from the Homebrew Channel." > "$f"
+          fi
       - name: Publish tagged release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          name: PictoCard for Wii ${{ steps.version.outputs.version }}
+          body_path: docs/releases/${{ github.ref_name }}.md
           make_latest: false
           files: |
             dist/PictoCard-Wii.zip

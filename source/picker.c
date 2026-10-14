@@ -12,6 +12,7 @@
 #include "ui.h"
 #include "image.h"
 #include "util.h"
+#include "scroll.h"
 
 #define ROW_H 30
 #define MAX_ITEMS 512
@@ -22,7 +23,8 @@ static struct {
     pick_item_t *items;
     int count;
     int sel;
-    int scroll; /* pixels */
+    int scroll; /* pixels, this frame's offset from sc */
+    scroller_t sc;
     pick_cb cb;
     pick_preview_cb preview;
     void (*closed)(void);
@@ -65,12 +67,22 @@ static void step(pick_item_t *items, int count, int *sel, int dir)
     }
 }
 
-static void keep_visible(int sel, int *scroll, int visible)
+static int list_max(int count, int visible) { return count * ROW_H - visible * ROW_H; }
+
+/* ease the list so the selected row shows, with half a row of context */
+static void keep_visible(scroller_t *sc, int sel, int count, int visible)
 {
-    int top = sel * ROW_H, bottom = top + ROW_H, view = visible * ROW_H;
-    if (top < *scroll) *scroll = top - (sel > 0 ? ROW_H / 2 : 0);
-    if (bottom > *scroll + view) *scroll = bottom - view + ROW_H / 2;
-    if (*scroll < 0) *scroll = 0;
+    int top = sel * ROW_H - (sel > 0 ? ROW_H / 2 : 0), bottom = sel * ROW_H + ROW_H + ROW_H / 2;
+    scroller_reveal(sc, top, bottom, visible * ROW_H, list_max(count, visible));
+}
+
+/* B-drag, edge scrolling and easing for a list (scroll.c) */
+static int list_scroll(scroller_t *sc, input_t *in, int count, int visible)
+{
+    int x, y, w, h;
+    panel_geom(&x, &y, &w, &h);
+    scroller_update(sc, in, x, y + 42 + 12, w, visible * ROW_H, list_max(count, visible));
+    return scroller_px(sc);
 }
 
 /* Shared list drawing; returns the hovered row or -1 */
@@ -154,10 +166,12 @@ void picker_open(const char *title, pick_item_t *items, int count, int selected_
             if (items[i].value == selected_value) break;
         }
     if (pk.sel < 0) pk.sel = 0;
-    int x, y, w, h;
-    keep_visible(pk.sel, &pk.scroll, panel_geom(&x, &y, &w, &h));
-    pk.scroll = pk.sel * ROW_H - (panel_geom(&x, &y, &w, &h) / 2) * ROW_H;
-    if (pk.scroll < 0) pk.scroll = 0;
+    int x, y, w, h, visible = panel_geom(&x, &y, &w, &h);
+    int start = pk.sel * ROW_H - (visible / 2) * ROW_H, max = list_max(count, visible);
+    if (start > max) start = max;
+    if (start < 0) start = 0;
+    pk.sc.pos = pk.sc.target = start;
+    pk.scroll = start;
 }
 
 void picker_update(void *vin)
@@ -174,7 +188,7 @@ void picker_update(void *vin)
         else if (ev.code == KEY_PAGEDOWN) in->down |= BTN_RIGHT;
         else if (ev.code == KEY_PAGEUP) in->down |= BTN_LEFT;
     }
-    if (in->moved) {
+    if (in->moved && !pk.sc.dragging) {
         int r = hover_row(in, pk.scroll, pk.count);
         if (r >= 0 && selectable(pk.items, r)) pk.sel = r;
     }
@@ -184,17 +198,8 @@ void picker_update(void *vin)
         for (int i = 0; i < visible - 1; i++) step(pk.items, pk.count, &pk.sel, -1);
     if (in->down & BTN_RIGHT)
         for (int i = 0; i < visible - 1; i++) step(pk.items, pk.count, &pk.sel, 1);
-    if (in->pointer) { /* point near the top or bottom edge to scroll */
-        int ly = y + 54;
-        if (in->px > x && in->px < x + w) {
-            if (in->py < ly + 16 && in->py > ly - 30) pk.scroll -= 6;
-            if (in->py > ly + visible * ROW_H - 16 && in->py < ly + visible * ROW_H + 30) pk.scroll += 6;
-            int max = pk.count * ROW_H - visible * ROW_H;
-            if (pk.scroll > max) pk.scroll = max;
-            if (pk.scroll < 0) pk.scroll = 0;
-        }
-    }
-    if (in->down & (BTN_UP | BTN_DOWN | BTN_LEFT | BTN_RIGHT)) keep_visible(pk.sel, &pk.scroll, visible);
+    if (in->down & (BTN_UP | BTN_DOWN | BTN_LEFT | BTN_RIGHT)) keep_visible(&pk.sc, pk.sel, pk.count, visible);
+    pk.scroll = list_scroll(&pk.sc, in, pk.count, visible);
     /* preview of the highlighted entry once the selection settles */
     if (pk.preview) {
         if (pk.sel != pk.last_sel) {
@@ -226,7 +231,7 @@ void picker_update(void *vin)
         if (any) cb(value);
         image_free(thumb);
         if (closed) closed();
-    } else if (in->down & BTN_B) {
+    } else if (pk.sc.b_tap) {
         picker_close();
     }
 }
@@ -257,6 +262,7 @@ static struct {
     char names[MAX_ITEMS][96];
     int count;
     int sel, scroll;
+    scroller_t sc;
     file_cb cb;
     image_t *thumb;
     int thumb_for;
@@ -291,6 +297,7 @@ static void list_dir(const char *dir)
     fb.count = 0;
     fb.sel = 0;
     fb.scroll = 0;
+    memset(&fb.sc, 0, sizeof fb.sc);
     fb.error[0] = 0;
     snprintf(fb.dir, sizeof fb.dir, "%s", dir);
 
@@ -427,7 +434,7 @@ void files_update(void *vin)
         else if (ev.code == KEY_ESC) in->down |= BTN_B;
     }
     int before = fb.sel;
-    if (in->moved) {
+    if (in->moved && !fb.sc.dragging) {
         int r = hover_row(in, fb.scroll, fb.count);
         if (r >= 0) fb.sel = r;
     }
@@ -437,7 +444,8 @@ void files_update(void *vin)
         for (int i = 0; i < visible - 1; i++) step(fb.items, fb.count, &fb.sel, -1);
     if (in->down & BTN_RIGHT)
         for (int i = 0; i < visible - 1; i++) step(fb.items, fb.count, &fb.sel, 1);
-    if (in->down & BTN_DIRS) keep_visible(fb.sel, &fb.scroll, visible);
+    if (in->down & BTN_DIRS) keep_visible(&fb.sc, fb.sel, fb.count, visible);
+    fb.scroll = list_scroll(&fb.sc, in, fb.count, visible);
     if (fb.sel != before) fb.idle = 0;
     else fb.idle++;
 
@@ -462,7 +470,7 @@ void files_update(void *vin)
 
     if (in->down & BTN_A) enter();
     else if (in->down & BTN_1) up_dir();
-    else if (in->down & BTN_B) fb.active = 0;
+    else if (fb.sc.b_tap) fb.active = 0;
 }
 
 void files_draw(int frame)

@@ -18,6 +18,7 @@
 #include "wiino.h"
 #include "outbox.h"
 #include "gallery.h"
+#include "scroll.h"
 #include "letterhead_ids.h"
 #include "letterheads_jpg.h"
 #include "cJSON.h"
@@ -55,7 +56,8 @@ static int content_h;
 
 static int screen = SCR_CONNECT;
 static int focus = F_REC_EMAIL;
-static int scroll, scroll_target;
+static int scroll; /* the form's scroll offset this frame, from form_scroll */
+static scroller_t form_scroll;
 static int frame;
 static int quit;
 
@@ -1152,10 +1154,7 @@ static void ensure_visible(void)
     if (!w) return;
     int top = w->y - 50, bottom = w->y + w->h + 40;
     if (w == &widgets[0] || w->y < panel_top[w->panel] + 80) top = panel_top[w->panel];
-    if (top < scroll_target) scroll_target = top;
-    if (bottom > scroll_target + LH) scroll_target = bottom - LH;
-    if (scroll_target > content_h - LH) scroll_target = content_h - LH;
-    if (scroll_target < 0) scroll_target = 0;
+    scroller_reveal(&form_scroll, top, bottom, LH, content_h - LH);
 }
 
 /* Focus order: every field in turn, then the review button */
@@ -1237,7 +1236,7 @@ static void compose_update(input_t *in)
 
     widget_t *hw = NULL;
     int hover = in->pointer ? widget_at(in->px, in->py, &hw) : 0;
-    if (in->moved && hover) focus = hover;
+    if (in->moved && hover && !form_scroll.dragging) focus = hover;
 
     if (in->down & BTN_UP) move_focus(-1);
     if (in->down & BTN_DOWN) move_focus(1);
@@ -1272,17 +1271,9 @@ static void compose_update(input_t *in)
     }
     if (in->down & BTN_MINUS) activate(F_THEME);
 
-    /* pointing at the column's top or bottom edge (or just past it) scrolls it: slowly at
-     * the edge, faster further out. The strip inside the column is thin so the fields near
-     * the edges stay clickable. */
-    if (in->pointer && in->px >= LX - 6 && in->px < LX + LW + 6) {
-        const int inner = 14, outer = 40;
-        int up = LY + inner - in->py, down = in->py - (LY + LH - inner);
-        if (up > 0 && up <= inner + outer) scroll_target -= 1 + up / 9;
-        if (down > 0 && down <= inner + outer) scroll_target += 1 + down / 9;
-        if (scroll_target < 0) scroll_target = 0;
-        if (scroll_target > content_h - LH) scroll_target = content_h - LH > 0 ? content_h - LH : 0;
-    }
+    /* B-drag, edge scrolling and easing (scroll.c) */
+    scroller_update(&form_scroll, in, LX, LY, LW, LH, content_h - LH);
+    scroll = scroller_px(&form_scroll);
     if (in->down & (BTN_UP | BTN_DOWN | BTN_1 | BTN_2)) ensure_visible();
 }
 
@@ -1847,7 +1838,7 @@ void app_run(void)
 
         build_widgets();
         if (!find(focus) && screen == SCR_COMPOSE && focus != F_REVIEW) focus = F_METHOD;
-        scroll += (scroll_target - scroll) / 3 + (scroll_target > scroll) - (scroll_target < scroll);
+        if (screen != SCR_COMPOSE) scroll = scroller_px(&form_scroll);
 
         /* While the Wii solves the anti-spam check, redraw rarely so the
          * solver gets the CPU. */

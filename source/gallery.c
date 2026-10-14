@@ -6,6 +6,7 @@
 #include "font.h"
 #include "input.h"
 #include "ui.h"
+#include "scroll.h"
 
 #define CELL_W 128
 #define CELL_H 128 /* thumbnail, then two lines for the name */
@@ -19,7 +20,8 @@ static struct {
     image_t *const *thumbs;
     const char *const *names, *const *groups;
     int count; /* cells, including "none" */
-    int sel, scroll, scroll_target;
+    int sel, scroll; /* scroll: this frame's offset, from sc */
+    scroller_t sc;
     gallery_cb cb;
 } g;
 
@@ -53,7 +55,9 @@ void gallery_open(const char *title, const char *none_label, image_t *const *thu
     int x, y, w, h, cols, gx, gy, gh;
     geom(&x, &y, &w, &h, &cols, &gx, &gy, &gh);
     int row_top = (g.sel / cols) * (CELL_H + GAP);
-    g.scroll = g.scroll_target = row_top + CELL_H > gh ? row_top + CELL_H - gh : 0;
+    memset(&g.sc, 0, sizeof g.sc);
+    g.sc.pos = g.sc.target = row_top + CELL_H > gh ? row_top + CELL_H - gh : 0;
+    g.scroll = (int)g.sc.pos;
 }
 
 int gallery_active(void) { return g.active; }
@@ -63,8 +67,7 @@ static int content_h(int cols) { return ((g.count + cols - 1) / cols) * (CELL_H 
 static void keep_visible(int cols, int gh)
 {
     int top = (g.sel / cols) * (CELL_H + GAP);
-    if (top < g.scroll_target) g.scroll_target = top;
-    if (top + CELL_H > g.scroll_target + gh) g.scroll_target = top + CELL_H - gh;
+    scroller_reveal(&g.sc, top, top + CELL_H, gh, content_h(cols) - gh);
 }
 
 void gallery_update(void *vin)
@@ -99,24 +102,16 @@ void gallery_update(void *vin)
         int i = cy * cols + cx;
         if (cx < cols && ix < CELL_W && iy < CELL_H && i < g.count) hover = i;
     }
-    if (in->moved && hover >= 0) g.sel = hover;
-    /* pointing near the grid's top or bottom edge scrolls it, faster closer to the edge */
-    if (in->pointer && in->px >= x && in->px < x + w) {
-        const int band = 40;
-        int up = gy + band - in->py, down = in->py - (gy + gh - band);
-        if (up > 0 && in->py >= y) g.scroll_target -= 1 + (up > band ? band : up) / 6;
-        if (down > 0 && in->py < y + h) g.scroll_target += 1 + (down > band ? band : down) / 6;
-    }
-    int max = content_h(cols) - gh;
-    if (g.scroll_target > max) g.scroll_target = max > 0 ? max : 0;
-    if (g.scroll_target < 0) g.scroll_target = 0;
-    g.scroll += (g.scroll_target - g.scroll) / 3 + (g.scroll_target > g.scroll) - (g.scroll_target < g.scroll);
+    if (in->moved && hover >= 0 && !g.sc.dragging) g.sel = hover;
+    /* B-drag, edge scrolling and easing (scroll.c); a B tap cancels */
+    scroller_update(&g.sc, in, x, gy, w, gh, content_h(cols) - gh);
+    g.scroll = scroller_px(&g.sc);
 
     if (in->down & BTN_A) {
         if (in->pointer && hover >= 0) g.sel = hover;
         g.active = 0;
         if (g.cb) g.cb(g.sel - 1);
-    } else if (in->down & BTN_B) {
+    } else if (g.sc.b_tap) {
         g.active = 0;
     }
 }

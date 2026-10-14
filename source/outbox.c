@@ -17,6 +17,7 @@
 #include <gccore.h>
 #include <ogc/lwp_watchdog.h>
 #include "outbox.h"
+#include "libpatcher.h"
 #include "font.h"
 #include "util.h"
 #include "wiidata.h"
@@ -122,10 +123,15 @@ static u8 *wrap_utf16(const char *text, size_t *out_len)
 
 /* ── NAND files ──────────────────────────────────────────────────────────── */
 
+static s32 isfs_error; /* the last ISFS failure, shown in error messages */
+
 static u8 *read_all(const char *path, u32 *size)
 {
     s32 fd = ISFS_Open(path, ISFS_OPEN_READ);
-    if (fd < 0) return NULL;
+    if (fd < 0) {
+        isfs_error = fd;
+        return NULL;
+    }
     static fstats st ATTRIBUTE_ALIGN(32);
     u8 *buf = NULL;
     if (ISFS_GetFileStats(fd, &st) >= 0) {
@@ -142,16 +148,18 @@ static u8 *read_all(const char *path, u32 *size)
 
 static int write_all(const char *path, const u8 *buf, u32 size, u32 old_size)
 {
+    s32 r;
     if (old_size != size) {
         /* Dolphin's NAND ships a 48-byte stub; recreate it at full size */
         ISFS_Delete(path);
-        if (ISFS_CreateFile(path, 0, 3, 3, 3) < 0) return 0;
+        if ((r = ISFS_CreateFile(path, 0, 3, 3, 3)) < 0) return isfs_error = r, 0;
     }
     s32 fd = ISFS_Open(path, ISFS_OPEN_WRITE);
-    if (fd < 0) return 0;
-    int ok = ISFS_Write(fd, buf, size) == (s32)size;
+    if (fd < 0) return isfs_error = fd, 0;
+    r = ISFS_Write(fd, buf, size);
     ISFS_Close(fd);
-    return ok;
+    if (r != (s32)size) return isfs_error = r, 0;
+    return 1;
 }
 
 /* ── FAT12 inside the VFF ────────────────────────────────────────────────── */
@@ -442,13 +450,20 @@ static void ctl_entry(u8 *e, u32 id, u32 size, const layout_t *L, u64 from_id, u
     put32(e + 0x78, 0x80000000);
 }
 
-static void kd_send_now(void)
+/* KD (WiiConnect24 in IOS) keeps its own copy of the mailboxes while its
+ * scheduler runs, so the NWC24 library suspends the scheduler around every
+ * mailbox change; writing behind a running KD can be undone by it. */
+enum { KD_SUSPEND = 0x01, KD_RESUME = 0x03, KD_SEND_NOW = 0x0B };
+
+static s32 kd_ioctl(int cmd)
 {
     s32 fd = IOS_Open("/dev/net/kd/request", 0);
-    if (fd < 0) return;
-    static u8 out[32] ATTRIBUTE_ALIGN(32);
-    IOS_Ioctl(fd, 0x0B, NULL, 0, out, sizeof out); /* IOCTL_NWC24_SEND_MAIL_NOW */
+    if (fd < 0) return fd;
+    static s32 out[8] ATTRIBUTE_ALIGN(32);
+    out[0] = 0;
+    s32 r = IOS_Ioctl(fd, cmd, NULL, 0, out, sizeof out);
     IOS_Close(fd);
+    return r < 0 ? r : out[0];
 }
 
 int outbox_send(const char *to_number, const char *sender_name, const char *text, const u8 *jpeg, size_t jpeg_len,
@@ -458,11 +473,16 @@ int outbox_send(const char *to_number, const char *sender_name, const char *text
     int rc = -1;
     u8 *ctl = NULL, *vff = NULL, *cfg = NULL;
     sb_t mail = { 0 };
+    isfs_error = 0;
+    /* the send box belongs to the system: open up NAND permissions when we can */
+    static int patched;
+    if (!patched && ahbprot_disabled()) patched = patch_isfs_permissions_in_place() ? 1 : -1;
     int isfs = ISFS_Initialize() >= 0;
     if (!isfs) {
         snprintf(err, err_len, "Could not open the Wii's system memory.");
         return -1;
     }
+    s32 suspended = kd_ioctl(KD_SUSPEND);
     u32 cfg_size = 0, ctl_size = 0, vff_size = 0;
     cfg = read_all("/shared2/wc24/nwc24msg.cfg", &cfg_size);
     if (!cfg || cfg_size < 0x400 || memcmp(cfg, "WcCf", 4)) FAIL("WiiConnect24 isn't set up on this Wii.");
@@ -474,7 +494,8 @@ int outbox_send(const char *to_number, const char *sender_name, const char *text
     if (domain[0] != '@') snprintf(domain, sizeof domain, "@wii.com");
 
     ctl = read_all(CTL_PATH, &ctl_size);
-    if (!ctl || ctl_size != CTL_SIZE || memcmp(ctl, "WcTf", 4)) FAIL("The WiiConnect24 send box is missing or damaged.");
+    if (!ctl) FAIL("Could not open the WiiConnect24 send box (error %d).", (int)isfs_error);
+    if (ctl_size != CTL_SIZE || memcmp(ctl, "WcTf", 4)) FAIL("The WiiConnect24 send box is damaged.");
     vff = memalign(32, VFF_SIZE);
     if (!vff) FAIL("The Wii ran out of memory.");
     u8 *old = read_all(MBX_PATH, &vff_size);
@@ -530,8 +551,8 @@ int outbox_send(const char *to_number, const char *sender_name, const char *text
     put32(ctl + 0x24, (N_CLUSTERS - 2 - used_clusters(vff)) * CLUSTER);
 
     /* the letter first, then the index that points at it */
-    if (!write_all(MBX_PATH, vff, VFF_SIZE, vff_size)) FAIL("Could not write the send box.");
-    if (!write_all(CTL_PATH, ctl, CTL_SIZE, CTL_SIZE)) FAIL("Could not write the send box index.");
+    if (!write_all(MBX_PATH, vff, VFF_SIZE, vff_size)) FAIL("Could not write the send box (error %d).", (int)isfs_error);
+    if (!write_all(CTL_PATH, ctl, CTL_SIZE, CTL_SIZE)) FAIL("Could not write the send box index (error %d).", (int)isfs_error);
     rc = 0;
 out:
     free(mail.p);
@@ -539,6 +560,7 @@ out:
     free(vff);
     free(cfg);
     ISFS_Deinitialize();
+    if (suspended >= 0) kd_ioctl(KD_RESUME);
 #ifdef AUTOTEST
     /* test builds: sd:/autotest-hold-outbox keeps letters in the send box for inspection */
     FILE *hold = fopen("sd:/autotest-hold-outbox", "r");
@@ -547,7 +569,7 @@ out:
         return rc;
     }
 #endif
-    if (!rc) kd_send_now();
+    if (!rc) kd_ioctl(KD_SEND_NOW);
     return rc;
 #undef FAIL
 }

@@ -140,6 +140,7 @@ static int hover_row(input_t *in, int scroll, int count)
 /* ── List picker ─────────────────────────────────────────────────────────── */
 
 int picker_active(void) { return pk.active; }
+int picker_hover(void) { return pk.sel; }
 
 void picker_open_preview(const char *title, pick_item_t *items, int count, int selected_value, pick_cb cb,
                          pick_preview_cb preview, void (*closed)(void))
@@ -369,6 +370,7 @@ static void list_dir(const char *dir)
 }
 
 int files_active(void) { return fb.active; }
+int files_hover(void) { return fb.sel; }
 
 void files_open(file_cb cb)
 {

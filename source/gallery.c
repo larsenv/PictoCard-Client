@@ -61,6 +61,7 @@ void gallery_open(const char *title, const char *none_label, image_t *const *thu
 }
 
 int gallery_active(void) { return g.active; }
+int gallery_hover(void) { return g.sel; }
 
 static int content_h(int cols) { return ((g.count + cols - 1) / cols) * (CELL_H + GAP) - GAP; }
 

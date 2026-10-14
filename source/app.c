@@ -22,6 +22,7 @@
 #include "letterhead_ids.h"
 #include "letterheads_jpg.h"
 #include "cJSON.h"
+#include "sfx.h"
 
 draft_t draft;
 
@@ -1761,6 +1762,42 @@ static void reset_cb(u32 irq, void *ctx)
 }
 static void power_cb(void) { quit = 2; }
 
+/* which modal is up: 0 none, 1 keyboard, 2 gallery, 3 list, 4 files, 5 doodle */
+static int modal_id(void)
+{
+    return osk_active() ? 1 : gallery_active() ? 2 : picker_active() ? 3 : files_active() ? 4 : doodle_active() ? 5 : 0;
+}
+
+static int hover_key(int modal)
+{
+    switch (modal) {
+    case 1: return osk_hover();
+    case 2: return gallery_hover();
+    case 3: return picker_hover();
+    case 4: return files_hover();
+    case 5: return -1; /* drawing: no ticks */
+    }
+    return screen * 1000 + focus;
+}
+
+/* a chime when a modal opens or closes, a click on A, a tick when the highlight moves */
+static void play_sounds(const input_t *in, int modal_was, int hover_was, int screen_was)
+{
+    static int last_tick;
+    int modal = modal_id(), pressed = (in->down & BTN_A) && !busy_modal && modal != 5 && modal_was != 5;
+    if (modal != modal_was) {
+        if (modal && !modal_was) sfx_play(SFX_OPEN);
+        else if (!modal) sfx_play(in->down & BTN_A ? SFX_CLICK : SFX_CLOSE);
+    } else if (screen != screen_was && screen == SCR_DONE) {
+        sfx_play(SFX_OPEN); /* sent! */
+    } else if (pressed) {
+        sfx_play(SFX_CLICK);
+    } else if (screen == screen_was && hover_key(modal) != hover_was && frame - last_tick >= 3 && !busy_modal) {
+        sfx_play(SFX_HOVER);
+        last_tick = frame;
+    }
+}
+
 void app_run(void)
 {
     SYS_SetResetCallback(reset_cb);
@@ -1786,6 +1823,7 @@ void app_run(void)
         frame++;
         input_poll(&in);
         if (in.down & BTN_HOME) break;
+        int modal_was = modal_id(), hover_was = hover_key(modal_was), screen_was = screen;
         if (api.finished) handle_finished();
         if (pending_source >= 0 && !picker_active()) {
             int source = pending_source;
@@ -1821,6 +1859,7 @@ void app_run(void)
         if ((in.down & BTN_MINUS) && !osk_active() && !gallery_active() && !picker_active() && !files_active() && !doodle_active() && !busy_modal &&
             screen != SCR_COMPOSE && screen != SCR_CONNECT)
             activate(F_THEME);
+        play_sounds(&in, modal_was, hover_was, screen_was);
         if (alert_frames > 0 && (in.down & ~BTN_DIRS) && !busy_modal) alert_frames = alert_frames > 60 ? 60 : alert_frames;
 
         /* live preview: redraw on the server shortly after the draft settles */

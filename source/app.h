@@ -46,6 +46,7 @@ char *draft_json(int for_send);
 /* keyboard.c — on-screen keyboard */
 void osk_open(const char *label, char *buf, int buf_size, int max_chars, int multiline, int numeric, int email);
 int osk_active(void);
+int osk_hover(void); /* the highlighted key, for the hover tick */
 void osk_insert_text(const char *s);
 void osk_update(void *input);
 void osk_draw(int frame);
@@ -79,11 +80,13 @@ typedef image_t *(*pick_preview_cb)(int value);
 void picker_open_preview(const char *title, pick_item_t *items, int count, int selected_value, pick_cb cb,
                          pick_preview_cb preview, void (*closed)(void));
 int picker_active(void);
+int picker_hover(void);
 void picker_update(void *input);
 void picker_draw(int frame);
 
 typedef void (*file_cb)(const char *path);
 void files_open(file_cb cb);
 int files_active(void);
+int files_hover(void);
 void files_update(void *input);
 void files_draw(int frame);

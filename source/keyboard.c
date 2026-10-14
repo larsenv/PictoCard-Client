@@ -58,6 +58,7 @@ static struct {
 } k;
 
 int osk_active(void) { return k.active; }
+int osk_hover(void) { return k.row * 64 + k.col; }
 
 void osk_open(const char *label, char *buf, int buf_size, int max_chars, int multiline, int numeric, int email)
 {

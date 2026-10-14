@@ -10,6 +10,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "settings.h"
+#include "sfx.h"
 #include "ui.h"
 #include "wiidata.h"
 
@@ -26,9 +27,11 @@ int main(int argc, char **argv)
     wiidata_load();
     api_init();
     srand(gettime());
+    sfx_init();
 
     app_run();
 
+    sfx_shutdown();
     input_shutdown();
     return 0;
 }

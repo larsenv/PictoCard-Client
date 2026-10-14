@@ -38,7 +38,7 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
 LIBS	:=	-lmbedtls -lfreetype -lpng16 -lturbojpeg -lwebp -lsharpyuv -lbrotlidec -lbrotlicommon -lbz2 -lz \
-		-lfat -lwiikeyboard -lwiiuse -lbte -logc -lm
+		-lfat -lwiikeyboard -lwiiuse -lbte -lasnd -logc -lm
 
 AUTOTEST	?=	0
 ifeq ($(AUTOTEST),1)
@@ -89,7 +89,7 @@ CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 sFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.S)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.png $(dir)/*.jpg $(dir)/*.woff $(dir)/*.ttf)))
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.png $(dir)/*.jpg $(dir)/*.woff $(dir)/*.ttf $(dir)/*.pcm)))
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -177,6 +177,10 @@ $(OFILES_SOURCES) : $(HFILES)
 	$(bin2o)
 
 %.ttf.o	%_ttf.h :	%.ttf
+	@echo $(notdir $<)
+	$(bin2o)
+
+%.pcm.o	%_pcm.h :	%.pcm
 	@echo $(notdir $<)
 	$(bin2o)
 

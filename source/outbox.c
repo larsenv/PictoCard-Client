@@ -335,7 +335,7 @@ typedef struct {
 static u32 pack(size_t off, size_t len) { return (u32)(len << 20 | off); }
 
 static int build_letter(sb_t *b, layout_t *L, const char *from, const char *to, const char *name, const char *text,
-                        const u8 *jpeg, size_t jpeg_len, const u8 *mii, time_t now)
+                        const u8 *jpeg, size_t jpeg_len, const u8 *arc, size_t arc_len, const u8 *mii, time_t now)
 {
     static const char *const MON[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
@@ -379,7 +379,8 @@ static int build_letter(sb_t *b, layout_t *L, const char *from, const char *to, 
     if (!u) return 0;
     char boundary[64];
     snprintf(boundary, sizeof boundary, "Boundary-NWC24-%08X%04X", (unsigned)now, (unsigned)(gettick() & 0xFFFF));
-    if (jpeg) {
+    int multipart = jpeg || arc;
+    if (multipart) {
         snprintf(line, sizeof line, "Content-Type: multipart/mixed;\r\n boundary=\"%s\"\r\n\r\n--%s\r\n", boundary,
                  boundary);
         ok &= sb_str(b, line);
@@ -396,20 +397,29 @@ static int build_letter(sb_t *b, layout_t *L, const char *from, const char *to, 
     L->text_encoded = b->len - L->text_offset;
     L->text_decoded = ul;
     free(u);
-    if (!jpeg) {
+    if (!multipart) {
         L->header_length = L->text_offset;
         ok &= sb_str(b, "\r\n\r\n\r\n");
     } else {
         /* the top-level header ends with the blank line before the first boundary */
         L->header_length = hdr_end_mark - strlen(boundary) - 4;
-        snprintf(line, sizeof line, "\r\n\r\n--%s\r\nContent-Type: image/jpeg;\r\n name=image.jpg\r\n"
-                 "Content-Transfer-Encoding: base64\r\nContent-Disposition: attachment;\r\n filename=image.jpg\r\n\r\n",
-                 boundary);
-        ok &= sb_str(b, line);
-        L->att_offset = b->len;
-        ok &= sb_b64(b, jpeg, jpeg_len);
-        L->att_size = b->len - L->att_offset;
-        L->att_decoded = jpeg_len;
+        if (jpeg) {
+            snprintf(line, sizeof line, "\r\n\r\n--%s\r\nContent-Type: image/jpeg;\r\n name=image.jpg\r\n"
+                     "Content-Transfer-Encoding: base64\r\nContent-Disposition: attachment;\r\n filename=image.jpg\r\n\r\n",
+                     boundary);
+            ok &= sb_str(b, line);
+            L->att_offset = b->len;
+            ok &= sb_b64(b, jpeg, jpeg_len);
+            L->att_size = b->len - L->att_offset;
+            L->att_decoded = jpeg_len;
+        }
+        if (arc) {
+            /* the letterhead part, as the server sends it (WiiLink Mail-Admin layout) */
+            snprintf(line, sizeof line, "\r\n\r\n--%s\r\nContent-Type: application/x-wii-msgboard;\r\n name=letterhead.arc\r\n"
+                     "Content-Transfer-Encoding: base64\r\nContent-Disposition: attachment;\r\n filename=letterhead.arc\r\n\r\n",
+                     boundary);
+            ok &= sb_str(b, line) && sb_b64(b, arc, arc_len);
+        }
         snprintf(line, sizeof line, "\r\n\r\n--%s--\r\n", boundary);
         ok &= sb_str(b, line);
     }
@@ -467,7 +477,7 @@ static s32 kd_ioctl(int cmd)
 }
 
 int outbox_send(const char *to_number, const char *sender_name, const char *text, const u8 *jpeg, size_t jpeg_len,
-                const u8 *mii, char *err, int err_len)
+                const u8 *arc, size_t arc_len, const u8 *mii, char *err, int err_len)
 {
 #define FAIL(...) do { snprintf(err, err_len, __VA_ARGS__); goto out; } while (0)
     int rc = -1;
@@ -510,7 +520,7 @@ int outbox_send(const char *to_number, const char *sender_name, const char *text
     snprintf(from, sizeof from, "w%016llu%s", (unsigned long long)own, domain);
     snprintf(to, sizeof to, "w%s%s", to_number, domain);
     layout_t L;
-    if (!build_letter(&mail, &L, from, to, sender_name, text, jpeg, jpeg_len, mii, now)) FAIL("The Wii ran out of memory.");
+    if (!build_letter(&mail, &L, from, to, sender_name, text, jpeg, jpeg_len, arc, arc_len, mii, now)) FAIL("The Wii ran out of memory.");
     if (mail.len > 1578040) FAIL("The letter is too large for WiiConnect24.");
 
     u32 count = ctl[8] << 24 | ctl[9] << 16 | ctl[10] << 8 | ctl[11];

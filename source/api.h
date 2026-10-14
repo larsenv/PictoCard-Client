@@ -25,7 +25,7 @@ typedef struct {
     int expression_count;
 } meta_t;
 
-enum { JOB_NONE, JOB_CONNECT, JOB_PREVIEW, JOB_SEND, JOB_VERIFY, JOB_FRIEND, JOB_FACES, JOB_LETTERHEADS };
+enum { JOB_NONE, JOB_CONNECT, JOB_PREVIEW, JOB_SEND, JOB_VERIFY, JOB_FRIEND, JOB_FACES, JOB_LETTERHEADS, JOB_ARC };
 enum { STAGE_IDLE, STAGE_NETWORK, STAGE_CHALLENGE, STAGE_SOLVING, STAGE_UPLOADING, STAGE_WAITING, STAGE_DONE };
 
 typedef struct {
@@ -50,6 +50,8 @@ typedef struct {
     char ip[20];
     image_t *sheet;            /* letterhead thumbnails in one grid, owned by the UI once finished */
     int sheet_w, sheet_h, sheet_cols, sheet_count;
+    unsigned char *arc;        /* a letterhead's .arc, owned by the UI once finished */
+    size_t arc_len;
 } api_state_t;
 
 extern meta_t meta;
@@ -66,3 +68,5 @@ int api_friend(const char *wii_number);
 int api_faces(char *body, int first);
 /* all letterhead thumbnails (w x h each) as one grid in api.sheet, in meta.letterheads order */
 int api_letterheads(int w, int h, int cols);
+/* one letterhead's .arc (for letters sent from this Wii's outbox) into api.arc */
+int api_letterhead_arc(const char *id);

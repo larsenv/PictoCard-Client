@@ -18,6 +18,8 @@
 #include "wiino.h"
 #include "outbox.h"
 #include "gallery.h"
+#include "letterhead_ids.h"
+#include "letterheads_jpg.h"
 #include "cJSON.h"
 
 draft_t draft;
@@ -656,9 +658,41 @@ static image_t *lh_thumbs[128];
 static const char *lh_names[128], *lh_groups[128];
 static int lh_state; /* 0 not asked, 1 asked, 2 loaded, -1 unavailable (the list is used) */
 
+/* Thumbnails built into the app (data/letterheads.jpg). Returns 1 when every
+ * letterhead the server lists has one, so nothing needs downloading. */
+static int bundled_letterheads(void)
+{
+    static int tried, complete;
+    if (tried) return complete;
+    tried = 1;
+    image_t *sheet = image_decode(letterheads_jpg, letterheads_jpg_size, 2048);
+    if (!sheet) return 0;
+    complete = 1;
+    for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
+        int k = 0;
+        while (k < LH_SHEET_COUNT && strcmp(LH_SHEET_IDS[k], meta.letterheads[i].id)) k++;
+        int sx = (k % LH_SHEET_COLS) * LH_SHEET_W, sy = (k / LH_SHEET_COLS) * LH_SHEET_H;
+        if (k == LH_SHEET_COUNT || sx + LH_SHEET_W > sheet->w || sy + LH_SHEET_H > sheet->h) {
+            complete = 0; /* a letterhead newer than this app */
+            continue;
+        }
+        image_t *t = image_new(LH_SHEET_W, LH_SHEET_H);
+        if (!t) {
+            complete = 0;
+            break;
+        }
+        for (int y = 0; y < t->h; y++) memcpy(t->px + y * t->w, sheet->px + (sy + y) * sheet->w + sx, t->w * 4);
+        image_free(lh_thumbs[i]);
+        lh_thumbs[i] = t;
+    }
+    image_free(sheet);
+    return complete;
+}
+
 static void request_letterheads(void)
 {
     static int retry_at;
+    if (!lh_state && meta.loaded && meta.letterhead_count && bundled_letterheads()) lh_state = 2;
     if (lh_state < 0 && gallery_active() && frame >= retry_at) lh_state = 0;
     if (lh_state || api.busy || !meta.loaded || !meta.letterhead_count || (draft.method != 1 && !gallery_active())) return;
     lh_state = api_letterheads(120, 88, 8) ? 1 : -1;
@@ -682,6 +716,7 @@ static void letterheads_loaded(void)
         image_t *t = image_new(api.sheet_w, api.sheet_h);
         if (!t) break;
         for (int y = 0; y < t->h; y++) memcpy(t->px + y * t->w, sheet->px + (sy + y) * sheet->w + sx, t->w * 4);
+        image_free(lh_thumbs[i]);
         lh_thumbs[i] = t;
     }
     image_free(sheet);
@@ -814,6 +849,12 @@ static void pick_recipient(void)
  * as the card the server drew for the preview. */
 static void start_confetti(void);
 
+/* the chosen letterhead's .arc, downloaded for letters sent from this Wii */
+static unsigned char *lh_arc;
+static size_t lh_arc_len;
+static char lh_arc_id[48];
+static int outbox_waiting_arc;
+
 static void send_from_outbox(void)
 {
     const char *err = validate_for(1);
@@ -821,10 +862,27 @@ static void send_from_outbox(void)
         show_alert(err, 1);
         return;
     }
+    const char *lh_id = draft.letterhead >= 0 ? meta.letterheads[draft.letterhead].id : NULL;
+    if (lh_id && (!lh_arc || strcmp(lh_arc_id, lh_id))) {
+        /* fetch the letterhead first; this runs again when it arrives */
+        if (api.busy || !api_letterhead_arc(lh_id)) {
+            show_alert("Still busy. Please try again in a moment.", 1);
+            return;
+        }
+        snprintf(lh_arc_id, sizeof lh_arc_id, "%s", lh_id);
+        outbox_waiting_arc = 1;
+        busy_modal = 1;
+        return;
+    }
     const u8 *jpeg = NULL;
     size_t jpeg_len = 0;
     unsigned char *card = NULL;
-    if (draft.attach == 1 || draft.attach == 3) {
+    if ((draft.attach == 1 || draft.attach == 3) && preview_card) {
+        /* the server's small baseline JPEG, like letters it sends itself */
+        card = image_encode_jpeg(preview_card, 85, &jpeg_len);
+        jpeg = card;
+    }
+    if ((draft.attach == 1 || draft.attach == 3) && !jpeg) {
         jpeg = draft.picture_jpeg;
         jpeg_len = draft.picture_len;
     } else if (draft.attach == 2) {
@@ -841,7 +899,8 @@ static void send_from_outbox(void)
     }
     char msg[160];
     int rc = outbox_send(draft.recipient_wii, draft.sender_name, draft.message, jpeg, jpeg_len,
-                         draft.mii >= 0 ? miis[draft.mii].data : NULL, msg, sizeof msg);
+                         lh_id ? lh_arc : NULL, lh_id ? lh_arc_len : 0, draft.mii >= 0 ? miis[draft.mii].data : NULL,
+                         msg, sizeof msg);
     free(card);
     if (rc) {
         show_alert(msg, 1);
@@ -1018,14 +1077,17 @@ static void draw_preview_panel(int x, int y, int w, int h)
     int sx = x + 1, sy = top, sw = w - 2, sh = h - (top - y) - 40;
     gfx_fill(sx, sy, sw, sh, T.bg2);
     gfx_grid(sx, sy, sw, sh, 14, T.grid);
-    image_t *src = draft.method == 1 && preview_letters ? preview_letter[0] : preview_card;
+    /* a long letter has several pages: show each in turn */
+    int page = draft.method == 1 && preview_letters > 1 ? (frame / 180) % preview_letters : 0;
+    image_t *src = draft.method == 1 && preview_letters ? preview_letter[page] : preview_card;
     if (src) {
-        if (!preview_fit_card || fit_for_w != sw - 12 || fit_for_h != sh - 12 || fit_letter_page != (src == preview_card ? -2 : 0)) {
+        int key = src == preview_card ? -2 : page;
+        if (!preview_fit_card || fit_for_w != sw - 12 || fit_for_h != sh - 12 || fit_letter_page != key) {
             image_free(preview_fit_card);
             preview_fit_card = image_fit(src, sw - 12, sh - 12);
             fit_for_w = sw - 12;
             fit_for_h = sh - 12;
-            fit_letter_page = src == preview_card ? -2 : 0;
+            fit_letter_page = key;
         }
         image_t *im = preview_fit_card;
         if (im) {
@@ -1036,6 +1098,13 @@ static void draw_preview_panel(int x, int y, int w, int h)
     } else {
         text_draw_center(FONT_REGULAR, 13, sx, sy + sh / 2 - 10, sw, T.muted,
                          api.busy && api.job == JOB_PREVIEW ? "Drawing your card..." : "Your card will appear here");
+    }
+    if (src && src != preview_card && preview_letters > 1) {
+        char pg[32];
+        snprintf(pg, sizeof pg, "Page %d of %d", page + 1, preview_letters);
+        int pw = text_width(FONT_BOLD, 12, pg) + 16;
+        gfx_round(sx + 8, sy + sh - 28, pw, 22, 11, T.bg2);
+        text_draw(FONT_BOLD, 12, sx + 16, sy + sh - 25, T.text, pg);
     }
     if (api.busy && api.job == JOB_PREVIEW) {
         gfx_round(sx + sw - 40, sy + 8, 32, 32, 16, T.bg2);
@@ -1051,8 +1120,10 @@ static void draw_preview_panel(int x, int y, int w, int h)
 static void draw_compose(void)
 {
     /* the hero stays over the form so the live preview can use the full height */
-    text_draw(FONT_BOLD, 24, 24, 72, T.text, "Send a PictoCard!");
-    text_draw_fit(FONT_REGULAR, 13, 24, 104, LW, T.muted, "Make a card and send it by email or to a Wii Message Board.");
+    static const char *sub = "Make a card and send it by email or to a Wii Message Board.";
+    int two = text_width(FONT_REGULAR, 13, sub) > LW;
+    text_draw(FONT_BOLD, 24, 24, two ? 64 : 72, T.text, "Send a PictoCard!");
+    ui_wrapped(FONT_REGULAR, 12, 24, two ? 94 : 104, LW, T.muted, sub, 2);
     int oy = LY - scroll;
     gfx_clip(LX - 6, LY - 4, LW + 12, LH + 8);
     for (int p = 0; p < 3; p++) {
@@ -1602,6 +1673,20 @@ static void handle_finished(void)
         }
         return;
     }
+    if (job == JOB_ARC) {
+        free(lh_arc);
+        lh_arc = api.ok ? api.arc : NULL;
+        lh_arc_len = api.ok ? api.arc_len : 0;
+        api.arc = NULL;
+        if (!lh_arc) lh_arc_id[0] = 0;
+        if (outbox_waiting_arc) {
+            outbox_waiting_arc = 0;
+            busy_modal = 0;
+            if (lh_arc) send_from_outbox();
+            else show_alert(api.error[0] ? api.error : "Could not download the letterhead.", 1);
+        }
+        return;
+    }
     if (job == JOB_LETTERHEADS) {
         letterheads_loaded();
         return;
@@ -1731,7 +1816,7 @@ void app_run(void)
             case SCR_CONNECT: {
                 key_event ev;
                 while (input_key(&ev))
-                    if (ev.code == KEY_ENTER) in.down |= BTN_A;
+                    if (ev.code == KEY_ENTER || ev.code == KEY_KP_ENTER) in.down |= BTN_A;
                 if ((in.down & BTN_A) && !api.busy && api.error[0]) activate(F_RETRY);
                 if (in.down & BTN_MINUS) activate(F_THEME);
                 break;

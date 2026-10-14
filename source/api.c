@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 #include <gccore.h>
 #include "api.h"
@@ -45,7 +46,18 @@ static cJSON *call(const char *method, const char *route, const char *body, size
     char url[256];
     snprintf(url, sizeof url, "%s/api/v1/%s", settings.server, route);
     http_response res;
-    if (http_request(method, url, "application/json", body, len, &res, progress) < 0) {
+    int rc;
+    /* A failed connect or TLS handshake happens before anything is sent, so it is
+     * safe to try again; Wi-Fi hiccups make these fail now and then. */
+    for (int attempt = 0;; attempt++) {
+        rc = http_request(method, url, "application/json", body, len, &res, progress);
+        if (rc >= 0 || attempt >= 2 ||
+            (!strstr(res.error, "secure connection failed") && !strstr(res.error, "Could not connect")))
+            break;
+        http_response_free(&res);
+        usleep(400 * 1000);
+    }
+    if (rc < 0) {
         set_error(res.error);
         api.status = 0;
         return NULL;
@@ -269,6 +281,22 @@ static int do_friend(const char *number)
     return 1;
 }
 
+static int do_arc(const char *id)
+{
+    char body[128];
+    snprintf(body, sizeof body, "{\"id\":\"%s\"}", id);
+    api.stage = STAGE_WAITING;
+    cJSON *json = call("POST", "letterhead-arc", body, strlen(body), NULL);
+    if (!json) return 0;
+    const cJSON *arc = cJSON_GetObjectItemCaseSensitive(json, "arc");
+    api.arc = NULL;
+    api.arc_len = 0;
+    if (cJSON_IsString(arc)) api.arc = base64_decode(arc->valuestring, &api.arc_len);
+    cJSON_Delete(json);
+    if (!api.arc) set_error("Could not download the letterhead.");
+    return api.arc != NULL;
+}
+
 static void *run(void *arg)
 {
     (void)arg;
@@ -281,6 +309,7 @@ static void *run(void *arg)
     case JOB_FRIEND: ok = do_friend(current.arg1); break;
     case JOB_FACES: ok = do_faces(current.body); break;
     case JOB_LETTERHEADS: ok = do_letterheads(current.body); break;
+    case JOB_ARC: ok = do_arc(current.arg1); break;
     }
     free(current.body);
     current.body = NULL;
@@ -331,6 +360,8 @@ int api_preview(char *body) { return start(JOB_PREVIEW, body, NULL, NULL); }
 int api_send(char *body) { return start(JOB_SEND, body, NULL, NULL); }
 int api_verify(const char *ticket, const char *code) { return start(JOB_VERIFY, NULL, ticket, code); }
 int api_friend(const char *number) { return start(JOB_FRIEND, NULL, number, NULL); }
+int api_letterhead_arc(const char *id) { return start(JOB_ARC, NULL, id, NULL); }
+
 int api_letterheads(int w, int h, int cols)
 {
     char *body = malloc(64);

@@ -89,7 +89,7 @@ CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 sFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.S)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.png $(dir)/*.woff $(dir)/*.ttf)))
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.png $(dir)/*.jpg $(dir)/*.woff $(dir)/*.ttf)))
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -165,6 +165,10 @@ $(OFILES_SOURCES) : $(HFILES)
 #---------------------------------------------------------------------------------
 %.png.o	%_png.h :	%.png
 #---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	$(bin2o)
+
+%.jpg.o	%_jpg.h :	%.jpg
 	@echo $(notdir $<)
 	$(bin2o)
 

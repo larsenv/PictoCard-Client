@@ -476,6 +476,7 @@ static image_t *lh_thumbs[128];
 static const char *lh_names[128], *lh_groups[128];
 static int lh_state;
 static void letterhead_picked(int value);
+static void request_letterheads(void);
 
 static void open_picker(int id)
 {
@@ -518,7 +519,14 @@ static void open_picker(int id)
         sel = draft.doodle;
         break;
     case F_LETTERHEAD: {
-        if (lh_state == 2) {
+        if (meta.letterhead_count) {
+            /* the gallery opens at once; thumbnails fill in when they arrive */
+            for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
+                lh_names[i] = meta.letterheads[i].name;
+                lh_groups[i] = meta.letterheads[i].group;
+            }
+            if (lh_state < 0) lh_state = 0; /* try again */
+            request_letterheads();
             gallery_open("Choose a letterhead", "Plain letter", lh_thumbs, lh_names, lh_groups,
                          meta.letterhead_count < 128 ? meta.letterhead_count : 128, draft.letterhead, letterhead_picked);
             return;
@@ -650,8 +658,11 @@ static int lh_state; /* 0 not asked, 1 asked, 2 loaded, -1 unavailable (the list
 
 static void request_letterheads(void)
 {
-    if (lh_state || api.busy || !meta.loaded || !meta.letterhead_count || draft.method != 1) return;
+    static int retry_at;
+    if (lh_state < 0 && gallery_active() && frame >= retry_at) lh_state = 0;
+    if (lh_state || api.busy || !meta.loaded || !meta.letterhead_count || (draft.method != 1 && !gallery_active())) return;
     lh_state = api_letterheads(120, 88, 8) ? 1 : -1;
+    retry_at = frame + 300;
 }
 
 static void letterheads_loaded(void)
@@ -660,7 +671,8 @@ static void letterheads_loaded(void)
     api.sheet = NULL;
     if (!api.ok || !sheet || api.sheet_w <= 0 || api.sheet_h <= 0 || api.sheet_cols <= 0) {
         image_free(sheet);
-        lh_state = -1;
+        lh_state = -1; /* retried while the gallery is open */
+        if (gallery_active()) show_alert(api.error[0] ? api.error : "Could not load the letterhead pictures.", 1);
         return;
     }
     int n = meta.letterhead_count < api.sheet_count ? meta.letterhead_count : api.sheet_count;
@@ -673,10 +685,6 @@ static void letterheads_loaded(void)
         lh_thumbs[i] = t;
     }
     image_free(sheet);
-    for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
-        lh_names[i] = meta.letterheads[i].name;
-        lh_groups[i] = meta.letterheads[i].group;
-    }
     lh_state = 2;
 }
 
@@ -1193,13 +1201,14 @@ static void compose_update(input_t *in)
     }
     if (in->down & BTN_MINUS) activate(F_THEME);
 
-    /* pointing into the column's top or bottom band scrolls it, slowly at first
-     * and faster closer to (or past) the edge */
+    /* pointing at the column's top or bottom edge (or just past it) scrolls it: slowly at
+     * the edge, faster further out. The strip inside the column is thin so the fields near
+     * the edges stay clickable. */
     if (in->pointer && in->px >= LX - 6 && in->px < LX + LW + 6) {
-        const int band = 48;
-        int up = LY + band - in->py, down = in->py - (LY + LH - band);
-        if (up > 0 && in->py >= LY - 40) scroll_target -= 1 + (up > band ? band : up) / 8;
-        if (down > 0 && in->py < LY + LH + 40) scroll_target += 1 + (down > band ? band : down) / 8;
+        const int inner = 14, outer = 40;
+        int up = LY + inner - in->py, down = in->py - (LY + LH - inner);
+        if (up > 0 && up <= inner + outer) scroll_target -= 1 + up / 9;
+        if (down > 0 && down <= inner + outer) scroll_target += 1 + down / 9;
         if (scroll_target < 0) scroll_target = 0;
         if (scroll_target > content_h - LH) scroll_target = content_h - LH > 0 ? content_h - LH : 0;
     }
@@ -1743,11 +1752,13 @@ void app_run(void)
             requested_version != version && frame - changed_frame > 50)
             request_preview();
         if (pending_review && !api.busy && requested_version != version) request_preview();
+        /* letterhead thumbnails, then Mii faces, after the live preview */
+        if (gallery_active() || (screen == SCR_COMPOSE && !api.busy && !pending_review &&
+                                 (version == preview_version || requested_version == version)))
+            request_letterheads();
         /* Mii faces go last so the live preview always comes first */
         if (screen == SCR_COMPOSE && !api.busy && !pending_review && (version == preview_version || requested_version == version))
             request_faces();
-        if (screen == SCR_COMPOSE && !api.busy && !pending_review && (version == preview_version || requested_version == version))
-            request_letterheads();
 
         build_widgets();
         if (!find(focus) && screen == SCR_COMPOSE && focus != F_REVIEW) focus = F_METHOD;

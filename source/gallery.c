@@ -8,7 +8,7 @@
 #include "ui.h"
 
 #define CELL_W 128
-#define CELL_H 112 /* thumbnail, then a line for the name */
+#define CELL_H 128 /* thumbnail, then two lines for the name */
 #define THUMB_W 120
 #define THUMB_H 88
 #define GAP 10
@@ -131,7 +131,6 @@ static void draw_plain(int x, int y)
 
 void gallery_draw(int frame)
 {
-    (void)frame;
     if (!g.active) return;
     int x, y, w, h, cols, gx, gy, gh;
     geom(&x, &y, &w, &h, &cols, &gx, &gy, &gh);
@@ -148,9 +147,12 @@ void gallery_draw(int frame)
         const image_t *im = i ? g.thumbs[i - 1] : NULL;
         if (!i) draw_plain(tx, ty);
         else if (im) gfx_stretch(im, tx, ty, THUMB_W, THUMB_H);
-        else gfx_fill(tx, ty, THUMB_W, THUMB_H, T.bg2);
+        else {
+            gfx_fill(tx, ty, THUMB_W, THUMB_H, T.bg2);
+            ui_spinner(tx + THUMB_W / 2, ty + THUMB_H / 2, 8, T.accent, frame + i * 3);
+        }
         const char *name = i ? g.names[i - 1] : g.none_label;
-        text_draw_fit(FONT_REGULAR, 11, cx + 6, cy + THUMB_H + 7, CELL_W - 12, sel ? T.accent : T.text, name);
+        ui_wrapped(FONT_REGULAR, 11, cx + 6, cy + THUMB_H + 6, CELL_W - 12, sel ? T.accent : T.text, name, 2);
     }
     gfx_noclip();
     /* fade the grid's edges while it scrolls */

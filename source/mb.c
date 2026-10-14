@@ -149,20 +149,31 @@ static char error_text[160];
 static mb_cb deliver;
 static void (*report_error)(const char *);
 
-/* the attachment inside a message buffer (header at 0), or NULL */
+static int is_picture(const u8 *data)
+{
+    return !memcmp(data, "AJPG", 4) || (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF);
+}
+
+/* The picture inside a message buffer (header at 0), or NULL. The CDBFILE
+ * attachment fields are tried first; messages that keep their picture
+ * elsewhere are searched for an AJPG or JPEG start after the header. */
 static const u8 *attachment(const u8 *msg, size_t len, u32 *size)
 {
     if (len < HEADER_READ) return NULL;
     const u8 *file = msg + ATTR_SIZE;
     u32 off = be32(file + 0x12C), asz = be32(file + 0x130);
-    if (!off || asz < 16 || (size_t)ATTR_SIZE + off + asz > len) return NULL;
-    *size = asz;
-    return file + off;
-}
-
-static int is_picture(const u8 *data)
-{
-    return !memcmp(data, "AJPG", 4) || (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF);
+    if (off && asz >= 16 && (size_t)ATTR_SIZE + off + asz <= len && is_picture(file + off)) {
+        *size = asz;
+        return file + off;
+    }
+    for (size_t i = HEADER_READ; i + 16 <= len; i++) {
+        const u8 *p = msg + i;
+        if ((p[0] == 'A' && !memcmp(p, "AJPG", 4)) || (p[0] == 0xFF && p[1] == 0xD8 && p[2] == 0xFF && (p[3] & 0xF0) == 0xE0)) {
+            *size = (u32)(len - i);
+            return p;
+        }
+    }
+    return NULL;
 }
 
 /* Message Board photos have no names of their own, so entries are listed by date and time. */
@@ -237,8 +248,16 @@ static void scan_dir_entries(const u8 *base, int count, int depth)
         u32 off = be32(head + ATTR_SIZE + 0x12C), asz = be32(head + ATTR_SIZE + 0x130);
         u8 magic[4];
         if (off && asz >= 16 && (u64)ATTR_SIZE + off + asz <= size &&
-            vff_file_read(first, size, ATTR_SIZE + off, magic, 4) == 4 && is_picture(magic))
+            vff_file_read(first, size, ATTR_SIZE + off, magic, 4) == 4 && is_picture(magic)) {
             add_entry(&e, head);
+        } else if (size >= 4096 && size <= 8 * 1024 * 1024) {
+            /* no usable attachment fields: search the whole message (pictures make it large) */
+            u8 *msg = malloc(size);
+            u32 asz2;
+            if (msg && vff_file_read(first, size, 0, msg, size) == size && attachment(msg, size, &asz2))
+                add_entry(&e, head);
+            free(msg);
+        }
     }
 }
 

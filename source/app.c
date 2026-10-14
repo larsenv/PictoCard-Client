@@ -246,6 +246,22 @@ static void set_style(int doodle)
     clear_picture();
 }
 
+/* The Attachment list offers "A doodle" next to "A PictoCard": it is a
+ * PictoCard in the doodle style. */
+#define ATTACH_CHOICES 5
+static int attach_choice(void) { return draft.attach == 2 && draft.doodle ? 4 : draft.attach; }
+
+static void set_attach_choice(int choice)
+{
+    if (choice == 4) {
+        set_attach(2);
+        set_style(1);
+    } else {
+        if (choice == 2) set_style(0);
+        set_attach(choice);
+    }
+}
+
 /* ── Widget layout ───────────────────────────────────────────────────────── */
 
 static int LX, LY, LW, LH, RX, RW; /* left column viewport, right column */
@@ -293,7 +309,8 @@ static void build_widgets(void)
         add(F_FRIEND, W_BUTTON, 0, NULL, friend_hint(), 34, 0);
     }
     if (wii) add(F_ATTACH, W_SELECT, 1, "Attachment", NULL, 52, 0);
-    if (makes_card()) add(F_STYLE, W_SELECT, 1, "Card style", NULL, 52, 0);
+    /* Wii letters pick the doodle from the Attachment list instead */
+    if (makes_card() && !wii) add(F_STYLE, W_SELECT, 1, "Card style", NULL, 52, 0);
     if (has_picture_field()) {
         if (is_doodle())
             add(F_PICTURE, W_FILE, 1, "Your doodle", "Draw with the pointer, a USB mouse or the D-Pad.", 62, 0);
@@ -361,7 +378,7 @@ static widget_t *find(int id)
 static const char *attach_name(int a)
 {
     return a == 1 ? "A picture from the SD card or USB drive" : a == 2 ? "A PictoCard"
-         : a == 3 ? "A picture from the Wii Message Board" : "No attachment";
+         : a == 3 ? "A picture from the Wii Message Board" : a == 4 ? "A doodle" : "No attachment";
 }
 
 static const char *select_value(int id, u32 *swatch, int *has_swatch)
@@ -369,7 +386,7 @@ static const char *select_value(int id, u32 *swatch, int *has_swatch)
     static char buf[128];
     *has_swatch = 0;
     switch (id) {
-    case F_ATTACH: return attach_name(draft.attach);
+    case F_ATTACH: return attach_name(attach_choice());
     case F_STYLE: return draft.doodle ? "Doodle (your drawing is the card)" : "PictoCard (picture and message)";
     case F_LETTERHEAD:
         if (draft.letterhead < 0) return "Default (plain letter)";
@@ -400,7 +417,7 @@ static void cycle(int id, int dir)
         draft.method = !draft.method;
         if (focus != F_METHOD) focus = F_METHOD;
         break;
-    case F_ATTACH: set_attach((draft.attach + 4 + dir) % 4); break;
+    case F_ATTACH: set_attach_choice((attach_choice() + ATTACH_CHOICES + dir) % ATTACH_CHOICES); break;
     case F_STYLE: set_style(!draft.doodle); break;
     case F_LETTERHEAD:
         if (!meta.letterhead_count) return;
@@ -442,7 +459,7 @@ static void picked(int value)
 {
     switch (pick_field) {
     case F_PICTURE: pending_source = value; return;
-    case F_ATTACH: set_attach(value); break;
+    case F_ATTACH: set_attach_choice(value); break;
     case F_STYLE: set_style(value); break;
     case F_LETTERHEAD: draft.letterhead = value; break;
     case F_MII: draft.mii = value; break;
@@ -473,13 +490,13 @@ static void open_picker(int id)
         break;
     case F_ATTACH:
         title = "Attachment";
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ATTACH_CHOICES; i++) {
             snprintf(pick_items[n].label, 96, "%s", attach_name(i));
             pick_items[n].value = i;
             pick_items[n].header = pick_items[n].has_color = 0;
             n++;
         }
-        sel = draft.attach;
+        sel = attach_choice();
         break;
     case F_STYLE:
         title = "Card style";
@@ -1189,7 +1206,7 @@ static void draw_review(void)
         format_wii_number(draft.recipient_wii, pretty);
         summary_row(x, &y, w, "To Wii Number", pretty);
         summary_row(x, &y, w, "From", draft.sender_name[0] ? draft.sender_name : "Someone");
-        snprintf(buf, sizeof buf, "%s, %s", attach_name(draft.attach),
+        snprintf(buf, sizeof buf, "%s, %s", attach_name(attach_choice()),
                  draft.letterhead >= 0 ? meta.letterheads[draft.letterhead].name : "plain letter");
         summary_row(x, &y, w, "Letter", buf);
     } else {

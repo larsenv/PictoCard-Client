@@ -182,17 +182,25 @@ typedef struct { int x, y, w, h; } rect_t;
 
 static int units(void) { return k.numeric ? 3 : COLS; }
 
+static int box_h = 40; /* text box height from the last geometry() */
+
 static void geometry(int *px, int *py, int *pw, int *ph, int *kx, int *ky, int *kw, int *kh)
 {
     int w = k.numeric ? 340 : (SW - 48 > 640 ? 640 : SW - 48);
     int text_h = k.multiline ? 120 : 40;
     int key_h = 36;
     int h = 42 + 34 + text_h + 14 + rows() * (key_h + 6) + 14;
+    /* keep the whole keyboard on screen above the footer: shrink the message box, then the keys */
+    int room = SH - 40 - 16;
+    while (h > room && text_h > 84) text_h -= 2, h -= 2;
+    while (h > room && key_h > 28) key_h--, h -= rows();
     *pw = w;
     *ph = h;
     *px = (SW - w) / 2;
     *py = SH - 40 - h;
     if (*py < 70) *py = 70;
+    if (*py + h > SH - 40) *py = SH - 40 - h;
+    box_h = text_h;
     *kx = *px + 14;
     *ky = *py + 42 + 34 + text_h + 14;
     *kw = (w - 28) / units();
@@ -318,7 +326,7 @@ void osk_draw(int frame)
     text_draw(FONT_REGULAR, 12, px + pw - 14 - text_width(FONT_REGULAR, 12, count), py + 14, T.muted, count);
 
     /* text box */
-    int bx = px + 14, by = top + 12, bw = pw - 28, bh = k.multiline ? 120 : 40;
+    int bx = px + 14, by = top + 12, bw = pw - 28, bh = box_h;
     gfx_frame(bx, by, bw, bh, RADIUS, T.input_bg, T.accent, 2);
     int show_caret = (k.blink / 30) % 2 == 0;
     if (k.multiline) {

@@ -74,8 +74,10 @@ static int done_wii;
 static pick_item_t pick_items[512];
 
 /* confetti, as on the site after sending */
-typedef struct { float x, y, vx, vy, rot, vr; u32 color; } confetti_t;
-static confetti_t confetti[140];
+typedef struct { float x, y, vx, vy, rot, vr, phase, sway; u32 color; int shape, delay, size; } confetti_t;
+#define CONFETTI 260
+#define CONFETTI_FRAMES 330
+static confetti_t confetti[CONFETTI];
 static int confetti_frames;
 
 static void show_alert(const char *msg, int error)
@@ -667,11 +669,16 @@ static void go_review(void)
     review_page = 0;
     review_show_card = 0;
     screen = SCR_REVIEW;
-    focus = F_SEND;
+    focus = outbox_available() ? F_OUTBOX : F_SEND;
 }
 
 static void start_send(void)
 {
+    const char *err = validate_for(0);
+    if (err) {
+        show_alert(err, 1);
+        return;
+    }
     char *body = draft_json(1);
     if (!body) {
         show_alert("The Wii ran out of memory.", 1);
@@ -799,7 +806,7 @@ static void activate(int id)
         if (strlen(verify_code) != 6) show_alert("Enter the 6-digit code from the email.", 1);
         else if (api_verify(verify_ticket, verify_code)) busy_modal = 1;
         break;
-    case F_VERIFY_BACK: screen = SCR_REVIEW; focus = F_SEND; break;
+    case F_VERIFY_BACK: screen = SCR_REVIEW; focus = outbox_available() ? F_OUTBOX : F_SEND; break;
     case F_ANOTHER:
         draft.message[0] = draft.card_text[0] = 0;
         screen = SCR_COMPOSE;
@@ -1193,8 +1200,13 @@ static void draw_review(void)
         ui_wrapped(FONT_REGULAR, 12, x, y, w, T.muted, buf, 2);
     }
     int by = LY + LH - 100;
-    if (outbox_available()) ui_button(x, by - 46, w, 36, "Send from this Wii (outbox)", 0, focus == F_OUTBOX, api.busy);
-    ui_button(x, by, w, 40, "Send it! ->", 1, focus == F_SEND, api.busy);
+    if (outbox_available()) {
+        /* sending from this Wii's own Wii Number is the default; PictoCard's Wii Number is the alternative */
+        ui_button(x, by - 50, w, 40, "Send it! ->", 1, focus == F_OUTBOX, api.busy);
+        ui_button(x, by, w, 36, "Send from PictoCard", 0, focus == F_SEND, api.busy);
+    } else {
+        ui_button(x, by, w, 40, "Send it! ->", 1, focus == F_SEND, api.busy);
+    }
     ui_button(x, by + 50, w, 34, "Edit card", 0, focus == F_EDIT, 0);
     static const char *const hints[] = { "A", "Select", "B", "Edit", "<>", "Page", "1", "Letter / Attachment" };
     static const char *const ehints[] = { "A", "Select", "B", "Edit", "HOME", "Exit" };
@@ -1218,7 +1230,7 @@ static void review_update(input_t *in)
     if (in->moved) {
         if (in->px >= px + 14 && in->px < px + pw - 14 && in->py >= by && in->py < by + 40) focus = F_SEND;
         if (in->px >= px + 14 && in->px < px + pw - 14 && in->py >= by + 50 && in->py < by + 84) focus = F_EDIT;
-        if (outbox_available() && in->px >= px + 14 && in->px < px + pw - 14 && in->py >= by - 46 && in->py < by - 10)
+        if (outbox_available() && in->px >= px + 14 && in->px < px + pw - 14 && in->py >= by - 50 && in->py < by - 10)
             focus = F_OUTBOX;
     }
     if (in->down & (BTN_UP | BTN_DOWN)) {
@@ -1294,39 +1306,100 @@ static void verify_update(input_t *in)
 
 /* ── Done screen ─────────────────────────────────────────────────────────── */
 
+static float frand(float lo, float hi) { return lo + (hi - lo) * (rand() % 1000) / 1000.0f; }
+
 static void start_confetti(void)
 {
-    static const u32 colors[] = { 0x84dbfc, 0x26ccff, 0xa25afd, 0xff5e7e, 0x88ff5a, 0xfcff42, 0xffa62d, 0xff36ff };
-    for (int i = 0; i < 140; i++) {
+    static const u32 colors[] = { 0x84dbfc, 0x26ccff, 0xa25afd, 0xff5e7e, 0x88ff5a, 0xfcff42, 0xffa62d, 0xff36ff, 0xffffff };
+    for (int i = 0; i < CONFETTI; i++) {
         confetti_t *c = &confetti[i];
-        int side = i % 2;
-        c->x = side ? SW - 40 : 40;
-        c->y = SH * 0.7f;
-        float ang = (side ? 120 : 60) * (float)M_PI / 180 + ((rand() % 100) - 50) / 100.0f;
-        float sp = 9 + (rand() % 100) / 12.0f;
-        c->vx = cosf(ang) * sp;
-        c->vy = -sinf(ang) * sp;
-        c->rot = rand() % 360;
-        c->vr = (rand() % 20) - 10;
-        c->color = colors[rand() % 8];
+        memset(c, 0, sizeof *c);
+        c->color = colors[rand() % 9];
+        c->shape = rand() % 10 < 6 ? 0 : rand() % 2 ? 1 : 2; /* paper, dot, streamer */
+        c->size = 5 + rand() % 4;
+        c->rot = frand(0, 360);
+        c->vr = frand(-14, 14);
+        c->phase = frand(0, 6.28f);
+        c->sway = frand(0.04f, 0.12f);
+        if (i < CONFETTI * 2 / 3) {
+            /* two cannons in the bottom corners */
+            int side = i % 2;
+            c->x = side ? SW - 30 : 30;
+            c->y = SH - 40;
+            float ang = (side ? 112 : 68) * (float)M_PI / 180 + frand(-0.35f, 0.35f);
+            float sp = frand(10, 19);
+            c->vx = cosf(ang) * sp;
+            c->vy = -sinf(ang) * sp;
+            c->delay = rand() % 12;
+        } else {
+            /* then a shower from the top */
+            c->x = frand(0, SW);
+            c->y = frand(-80, -10);
+            c->vx = frand(-1, 1);
+            c->vy = frand(1, 3);
+            c->delay = 35 + rand() % 70;
+        }
     }
-    confetti_frames = 200;
+    confetti_frames = CONFETTI_FRAMES;
+}
+
+/* the back of a flipping piece is a darker shade */
+static u32 shade(u32 c, int pct)
+{
+    int r = (c >> 16 & 255) * pct / 100, g = (c >> 8 & 255) * pct / 100, b = (c & 255) * pct / 100;
+    return (u32)(r << 16 | g << 8 | b);
 }
 
 static void draw_confetti(void)
 {
     if (confetti_frames <= 0) return;
+    int age = CONFETTI_FRAMES - confetti_frames;
     confetti_frames--;
-    int alpha = confetti_frames > 60 ? 255 : confetti_frames * 4;
-    for (int i = 0; i < 140; i++) {
+    int alpha = confetti_frames > 70 ? 255 : confetti_frames * 255 / 70;
+    for (int i = 0; i < CONFETTI; i++) {
         confetti_t *c = &confetti[i];
-        c->x += c->vx;
+        if (c->delay > 0) {
+            c->delay--;
+            continue;
+        }
+        c->x += c->vx + sinf(c->phase) * (c->vy > 0 ? 1.4f : 0.3f);
         c->y += c->vy;
-        c->vx *= 0.97f;
-        c->vy = c->vy * 0.97f + 0.35f;
+        c->vx *= 0.965f;
+        c->vy = c->vy * 0.97f + 0.28f;
+        if (c->vy > 3.4f) c->vy = 3.4f; /* paper flutters down instead of dropping */
+        c->phase += c->sway;
         c->rot += c->vr;
-        int w = 4 + (int)(3 * fabsf(cosf(c->rot * (float)M_PI / 180)));
-        gfx_fill_alpha((int)c->x, (int)c->y, w, 7, c->color, alpha);
+        if (c->y > SH + 20 || c->x < -30 || c->x > SW + 30) continue;
+        int x = (int)c->x, y = (int)c->y;
+        float flip = cosf(c->rot * (float)M_PI / 180);
+        switch (c->shape) {
+        case 0: { /* a paper square seen turning over */
+            int w = 1 + (int)(c->size * fabsf(flip) + 0.5f);
+            int h = c->size + 3 - (int)(2 * fabsf(sinf(c->phase)));
+            gfx_fill_alpha(x - w / 2, y, w, h, flip > 0 ? c->color : shade(c->color, 62), alpha);
+            break;
+        }
+        case 1: /* a round dot */
+            gfx_fill_alpha(x - 2, y - 1, 4, 6, c->color, alpha);
+            gfx_fill_alpha(x - 3, y, 6, 4, c->color, alpha);
+            break;
+        default: /* a curly streamer */
+            for (int k = 0; k < 7; k++) {
+                int sx = x + (int)(sinf(c->phase * 2 + k * 0.9f) * 3), sy = y + k * 2;
+                gfx_fill_alpha(sx, sy, 2, 3, k & 1 ? shade(c->color, 80) : c->color, alpha);
+            }
+        }
+    }
+    /* a few twinkles in the first seconds */
+    if (age < 150) {
+        for (int i = 0; i < 6; i++) {
+            confetti_t *c = &confetti[(age / 6 * 7 + i * 37) % CONFETTI];
+            if (c->delay > 0 || c->y < 0 || c->y > SH) continue;
+            int t = (age + i * 5) % 20, r = t < 10 ? t / 2 : (20 - t) / 2;
+            int x = (int)c->x + 8, y = (int)c->y - 6;
+            gfx_fill_alpha(x - r, y, r * 2 + 1, 1, 0xffffff, alpha);
+            gfx_fill_alpha(x, y - r, 1, r * 2 + 1, 0xffffff, alpha);
+        }
     }
 }
 

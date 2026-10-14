@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<app version="1">
+    <name>PictoCard</name>
+    <coder>Larsenv</coder>
+    <version>@VERSION@</version>
+    <release_date>@DATE@</release_date>
+    <short_description>Send PictoCards by email or to a Wii.</short_description>
+    <long_description>Create a picture greeting card on your Wii and send it by email, or send a letter to a Wii Message Board with WiiLink - just like on pictocard.net.
+
+Pick any photo from your SD card or USB drive, add a Mii from your Wii, choose a font and color, and preview the card before it's sent.
+
+Works with the Wii Remote (pointer and buttons), Nunchuk, Classic Controller, GameCube controller, Wii U GamePad and Pro Controller, DualShock 3, and a USB keyboard.
+
+Needs an Internet connection. https://pictocard.net</long_description>
+    <ahb_access/>
+</app>

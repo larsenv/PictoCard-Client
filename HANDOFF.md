@@ -48,7 +48,11 @@ send-box posts locally. Open items:
 - Dolphin reads the 2 MiB send-box VFF as FAT16 while the library writes FAT12, so outgoing letters over 512 bytes fail in Dolphin
   (fix belongs in Dolphin `VFFUtil.cpp read_vff_header`). Single-cluster letters reach `send.cgi`.
 - Not yet checked: does the Wii Menu import host-written inbox letters into `cdb.vff`? (test profile reached the System Menu "Press A" screen).
-- App: read `nwc24fl.bin` in `wiidata.c` (layout in the README) and offer friends as recipients; optionally queue letters in the send box.
+- App (done, tested in Dolphin): `wiidata.c` loads Wii friends from `nwc24fl.bin`; the Recipient Wii Number field opens an
+  address-book picker (or the keyboard). The review screen has "Send from this Wii (outbox)": `outbox.c` writes the letter into
+  `wc24send.ctl/.mbx` (FAT12 VFF, entries identical to the NWC24 library's) and asks KD to send now (ioctl 0x0B). A PictoCard
+  goes out as the server-drawn preview card; letterheads are server-only. AUTOTEST builds keep letters in the send box when
+  `sd:/autotest-hold-outbox` exists. Not tried on real hardware (needs ISFS write access to /shared2/wc24/mbox).
 
 - Card picture source (SD/USB vs Message Board) for the PictoCard: committed and pushed, compiles, not yet tried in Dolphin.
 - Message Board entries are listed by date and time only, because Message Board photos have no names.

@@ -7,3 +7,4 @@ dist/
 *.elf
 *.dol
 *.map
+__pycache__/

@@ -49,6 +49,15 @@ Not checked yet: whether the Wii Menu moves host-written inbox letters onto the
 Message Board (`cdb.vff`). The test profile booted the System Menu as far as its
 "Press A" screen.
 
+## In the app
+
+PictoCard-Wii reads the same friend list (`source/wiidata.c`) and offers it when you choose the
+recipient Wii Number. On the review screen, "Send from this Wii (outbox)" queues the letter in the send box
+with `source/outbox.c` and asks KD to send it straight away (`docs/nwc24/app-outbox-button.png`). The letter
+comes from this Wii's own number, so the recipient must have this Wii as a friend. In Dolphin, a text letter
+reached `sendcgi.py`. A picture letter was written correctly (its entry is identical to the library's,
+NWC24Editor opens it, and the JPEG is intact), but Dolphin's FAT bug above stops it from being sent there.
+
 ## Formats (from the RevoEX NWC24 library and Dolphin)
 
 - `nwc24fl.bin` (0x8060 bytes): 'WcFl', version 2, max 100, registered count;

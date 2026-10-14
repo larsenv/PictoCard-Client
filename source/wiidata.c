@@ -8,6 +8,8 @@
 mii_t miis[MAX_MIIS];
 int mii_count;
 char wii_number[24];
+friend_t friends[MAX_FRIENDS];
+int friend_count;
 
 static const u32 MII_COLORS[12] = {
     0xC1292E, 0xF5821F, 0xFCD20F, 0x7DC144, 0x15813A, 0x1D58AA,
@@ -62,6 +64,43 @@ void format_wii_number(const char *digits, char *out)
     out[n] = 0;
 }
 
+const char *friend_name(const char *number)
+{
+    for (int i = 0; i < friend_count; i++)
+        if (!strcmp(friends[i].number, number)) return friends[i].name;
+    return NULL;
+}
+
+/* nwc24fl.bin: 'WcFl', version 2, max entries, count; established bitmask u32[4]
+ * at 0x10; u64 friend codes at 0x40; 0x140-byte entries at 0x360 (u32 type
+ * 1 = Wii, u32 status, UTF-16BE nickname[12], u64 Mii ID, ..., u64 Wii Number at +0x40) */
+static void load_friends(void)
+{
+    u32 size = 0;
+    u8 *fl = read_nand("/shared2/wc24/nwc24fl.bin", &size);
+    if (fl && size >= 0x360 + MAX_FRIENDS * 0x140 && !memcmp(fl, "WcFl", 4)) {
+        for (int i = 0; i < MAX_FRIENDS && friend_count < MAX_FRIENDS; i++) {
+            const u8 *e = fl + 0x360 + i * 0x140;
+            u32 type = e[0] << 24 | e[1] << 16 | e[2] << 8 | e[3];
+            u64 code = 0;
+            memcpy(&code, fl + 0x40 + i * 8, 8);
+            if (type != 1 || !code) continue;
+            u64 id = 0;
+            memcpy(&id, e + 0x40, 8);
+            friend_t *f = &friends[friend_count];
+            snprintf(f->number, sizeof f->number, "%016llu", (unsigned long long)id);
+            if (strlen(f->number) != 16) continue;
+            utf16be_to_utf8(e + 8, 12, f->name, sizeof f->name);
+            if (!f->name[0]) snprintf(f->name, sizeof f->name, "Friend %d", i + 1);
+            u32 bits = fl[0x10 + (i >> 5) * 4] << 24 | fl[0x11 + (i >> 5) * 4] << 16 |
+                       fl[0x12 + (i >> 5) * 4] << 8 | fl[0x13 + (i >> 5) * 4];
+            f->established = (bits >> (i & 31)) & 1;
+            friend_count++;
+        }
+    }
+    free(fl);
+}
+
 void wiidata_load(void)
 {
     if (ISFS_Initialize() < 0) return;
@@ -90,5 +129,6 @@ void wiidata_load(void)
         }
     }
     free(db);
+    load_friends();
     ISFS_Deinitialize();
 }

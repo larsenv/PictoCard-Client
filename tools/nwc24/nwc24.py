@@ -734,6 +734,10 @@ class Vff:
         return free
 
     def write(self, long_name, short, data, when):
+        # KD reuses the IDs of deleted letters: drop a leftover file of the same name
+        stale = long_name.split(".")[0][:8] + "." + long_name.split(".")[1]
+        if stale.lower() in self.files():
+            self.delete(stale)
         clusters = self.alloc(max(1, -(-len(data) // CLUSTER)))
         for i, c in enumerate(clusters):
             o = self.cluster_off(c)

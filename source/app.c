@@ -16,6 +16,7 @@
 #include "version.h"
 #include "wiidata.h"
 #include "wiino.h"
+#include "outbox.h"
 #include "cJSON.h"
 
 draft_t draft;
@@ -32,7 +33,7 @@ enum { SCR_CONNECT, SCR_COMPOSE, SCR_REVIEW, SCR_VERIFY, SCR_DONE };
 enum {
     F_METHOD = 1, F_REC_EMAIL, F_SENDER_NAME, F_SENDER_EMAIL, F_REC_WII, F_FRIEND, F_PICTURE, F_ATTACH,
     F_LETTERHEAD, F_MII, F_EXPRESSION, F_BACKGROUND, F_MESSAGE, F_CARD_TEXT, F_FONT, F_COLOR, F_REVIEW,
-    F_SEND, F_EDIT, F_CODE, F_VERIFY_SEND, F_VERIFY_BACK, F_ANOTHER, F_EXIT, F_RETRY, F_THEME, F_STYLE
+    F_SEND, F_EDIT, F_CODE, F_VERIFY_SEND, F_VERIFY_BACK, F_ANOTHER, F_EXIT, F_RETRY, F_THEME, F_STYLE, F_OUTBOX
 };
 enum { W_TABS, W_TEXT, W_AREA, W_SELECT, W_FILE, W_RADIO, W_BUTTON };
 
@@ -284,7 +285,8 @@ static void build_widgets(void)
         add(F_SENDER_NAME, W_TEXT, 0, "Your Name", NULL, 52, 1);
         add(F_SENDER_EMAIL, W_TEXT, 0, "Your Email", NULL, 52, 2);
     } else {
-        add(F_REC_WII, W_TEXT, 0, "Recipient Wii Number", NULL, 52, 0);
+        add(F_REC_WII, W_TEXT, 0, "Recipient Wii Number",
+            friend_count ? "Press A to pick from this Wii's address book." : NULL, friend_count ? 62 : 52, 0);
         add(F_SENDER_NAME, W_TEXT, 0, "Your Name", "Shown on the letter. Optional.", 52, 0);
         add(F_FRIEND, W_BUTTON, 0, NULL, friend_hint(), 34, 0);
     }
@@ -617,7 +619,10 @@ static void request_preview(void)
     if (body && api_preview(body)) requested_version = version;
 }
 
-static const char *validate(void)
+/* Sending from this Wii's own outbox needs its Wii Number (WiiConnect24 set up) */
+static int outbox_available(void) { return draft.method == 1 && wii_number[0]; }
+
+static const char *validate_for(int outbox)
 {
     static char msg[160];
     if (draft.method == 0) {
@@ -626,7 +631,7 @@ static const char *validate(void)
         if (!strchr(draft.sender_email, '@')) return "A valid sender email is required for verification.";
         if (!draft.picture_jpeg) return draft.doodle ? "Please draw a doodle for your card." : "Please choose a picture for your card.";
     } else {
-        if (!meta.wii_enabled) return "Wii delivery isn't set up yet. Please check back soon.";
+        if (!outbox && !meta.wii_enabled) return "Wii delivery isn't set up yet. Please check back soon.";
         if (strlen(draft.recipient_wii) != 16) return "Enter the 16-digit Wii Number.";
         if (!wiino_valid(draft.recipient_wii)) return "That Wii Number doesn't look right. Please check it for typos.";
         if (!draft.message[0] && !((draft.attach == 1 || draft.attach == 3) && draft.picture_jpeg))
@@ -644,7 +649,8 @@ static const char *validate(void)
 
 static void go_review(void)
 {
-    const char *err = validate();
+    /* With the outbox, a Wii letter doesn't need the server's Wii delivery */
+    const char *err = validate_for(outbox_available());
     if (err) {
         show_alert(err, 1);
         return;
@@ -674,12 +680,104 @@ static void start_send(void)
     if (api_send(body)) busy_modal = 1;
 }
 
+static void picked_friend(int value)
+{
+    if (value < 0) {
+        osk_open("Recipient Wii Number", draft.recipient_wii, sizeof draft.recipient_wii, 16, 0, 1, 0);
+        return;
+    }
+    snprintf(draft.recipient_wii, sizeof draft.recipient_wii, "%s", friends[value].number);
+    draft_changed();
+}
+
+/* The recipient comes from the Message Board address book (nwc24fl.bin) or the keyboard */
+static void pick_recipient(void)
+{
+    int n = 0, sel = -1;
+    snprintf(pick_items[n].label, 96, "Type a Wii Number...");
+    pick_items[n].has_color = pick_items[n].header = 0;
+    pick_items[n].icon = NULL;
+    pick_items[n++].value = -1;
+    for (int pass = 0; pass < 2; pass++) {
+        int first = 1;
+        for (int i = 0; i < friend_count && n < 510; i++) {
+            if (friends[i].established != !pass) continue;
+            if (first) {
+                snprintf(pick_items[n].label, 96, pass ? "Not registered back yet" : "Address book");
+                pick_items[n].header = 1;
+                pick_items[n].has_color = 0;
+                pick_items[n].icon = NULL;
+                pick_items[n++].value = -2;
+                first = 0;
+            }
+            char num[24];
+            format_wii_number(friends[i].number, num);
+            snprintf(pick_items[n].label, 96, "%s  (%s)", friends[i].name, num);
+            pick_items[n].header = pick_items[n].has_color = 0;
+            pick_items[n].icon = NULL;
+            pick_items[n].value = i;
+            if (!strcmp(friends[i].number, draft.recipient_wii)) sel = i;
+            n++;
+        }
+    }
+    picker_open("Send to", pick_items, n, sel, picked_friend);
+}
+
+/* Queue the letter in this Wii's own WiiConnect24 send box. A PictoCard is sent
+ * as the card the server drew for the preview. */
+static void start_confetti(void);
+
+static void send_from_outbox(void)
+{
+    const char *err = validate_for(1);
+    if (err) {
+        show_alert(err, 1);
+        return;
+    }
+    const u8 *jpeg = NULL;
+    size_t jpeg_len = 0;
+    unsigned char *card = NULL;
+    if (draft.attach == 1 || draft.attach == 3) {
+        jpeg = draft.picture_jpeg;
+        jpeg_len = draft.picture_len;
+    } else if (draft.attach == 2) {
+        if (!preview_card) {
+            show_alert("The card hasn't been drawn yet. Please wait a moment and try again.", 1);
+            return;
+        }
+        card = image_encode_jpeg(preview_card, 85, &jpeg_len);
+        if (!card) {
+            show_alert("The Wii ran out of memory.", 1);
+            return;
+        }
+        jpeg = card;
+    }
+    char msg[160];
+    int rc = outbox_send(draft.recipient_wii, draft.sender_name, draft.message, jpeg, jpeg_len,
+                         draft.mii >= 0 ? miis[draft.mii].data : NULL, msg, sizeof msg);
+    free(card);
+    if (rc) {
+        show_alert(msg, 1);
+        return;
+    }
+    done_wii = 1;
+    screen = SCR_DONE;
+    focus = F_ANOTHER;
+    alert_frames = 0;
+    start_confetti();
+    show_alert("Queued in this Wii's outbox. WiiConnect24 sends it with the next mail check.", 0);
+}
+
 static void activate(int id)
 {
     widget_t *w = find(id);
     switch (id) {
     case F_METHOD: break;
-    case F_REC_EMAIL: case F_SENDER_NAME: case F_SENDER_EMAIL: case F_REC_WII: case F_MESSAGE: case F_CARD_TEXT: case F_CODE:
+    case F_REC_WII:
+        if (friend_count) pick_recipient();
+        else edit_text(id);
+        break;
+    case F_REC_EMAIL: case F_SENDER_NAME: case F_SENDER_EMAIL: case F_MESSAGE: case F_CARD_TEXT: case F_CODE:
         edit_text(id);
         break;
     case F_PICTURE:
@@ -695,6 +793,7 @@ static void activate(int id)
         break;
     case F_REVIEW: go_review(); break;
     case F_SEND: start_send(); break;
+    case F_OUTBOX: send_from_outbox(); break;
     case F_EDIT: screen = SCR_COMPOSE; focus = F_REVIEW; break;
     case F_VERIFY_SEND:
         if (strlen(verify_code) != 6) show_alert("Enter the 6-digit code from the email.", 1);
@@ -752,12 +851,21 @@ static void draw_widget(widget_t *w, int ox, int oy)
     }
     case W_TEXT: {
         const char *val = "", *ph = "";
-        char pretty[32];
+        char pretty[48];
         switch (w->id) {
         case F_REC_EMAIL: val = draft.recipient_email; ph = "friend@example.com"; break;
         case F_SENDER_NAME: val = draft.sender_name; ph = "Your name"; break;
         case F_SENDER_EMAIL: val = draft.sender_email; ph = "you@example.com"; break;
-        case F_REC_WII: format_wii_number(draft.recipient_wii, pretty); val = pretty; ph = "1234 5678 9012 3456"; break;
+        case F_REC_WII: {
+            char num[24];
+            format_wii_number(draft.recipient_wii, num);
+            const char *who = friend_name(draft.recipient_wii);
+            if (who) snprintf(pretty, sizeof pretty, "%.12s  %s", who, num);
+            else snprintf(pretty, sizeof pretty, "%s", num);
+            val = pretty;
+            ph = friend_count ? "Choose a friend or type a number" : "1234 5678 9012 3456";
+            break;
+        }
         case F_CODE: val = verify_code; ph = "123456"; break;
         }
         ui_input(x, box_y, w->w, box_h, val, ph, f, 0, 0);
@@ -1083,6 +1191,7 @@ static void draw_review(void)
         ui_wrapped(FONT_REGULAR, 12, x, y, w, T.muted, buf, 2);
     }
     int by = LY + LH - 100;
+    if (outbox_available()) ui_button(x, by - 46, w, 36, "Send from this Wii (outbox)", 0, focus == F_OUTBOX, api.busy);
     ui_button(x, by, w, 40, "Send it! ->", 1, focus == F_SEND, api.busy);
     ui_button(x, by + 50, w, 34, "Edit card", 0, focus == F_EDIT, 0);
     static const char *const hints[] = { "A", "Select", "B", "Edit", "<>", "Page", "1", "Letter / Attachment" };
@@ -1107,8 +1216,16 @@ static void review_update(input_t *in)
     if (in->moved) {
         if (in->px >= px + 14 && in->px < px + pw - 14 && in->py >= by && in->py < by + 40) focus = F_SEND;
         if (in->px >= px + 14 && in->px < px + pw - 14 && in->py >= by + 50 && in->py < by + 84) focus = F_EDIT;
+        if (outbox_available() && in->px >= px + 14 && in->px < px + pw - 14 && in->py >= by - 46 && in->py < by - 10)
+            focus = F_OUTBOX;
     }
-    if (in->down & (BTN_UP | BTN_DOWN)) focus = focus == F_SEND ? F_EDIT : F_SEND;
+    if (in->down & (BTN_UP | BTN_DOWN)) {
+        static const int order[] = { F_OUTBOX, F_SEND, F_EDIT };
+        int i = focus == F_OUTBOX ? 0 : focus == F_SEND ? 1 : 2;
+        do i = (i + (in->down & BTN_UP ? 2 : 1)) % 3;
+        while (order[i] == F_OUTBOX && !outbox_available());
+        focus = order[i];
+    }
     if (in->down & BTN_LEFT) review_page = review_page > 0 ? review_page - 1 : (preview_letters ? preview_letters - 1 : 0);
     if (in->down & BTN_RIGHT) review_page++;
     if ((in->down & BTN_1) && preview_card && preview_letters) review_show_card = !review_show_card;

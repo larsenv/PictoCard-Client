@@ -13,7 +13,7 @@ To receive letters, a Wii adds PictoCard as a friend once. The app can send that
 
 ## Controls
 
-Every controller GlowWii supports works here, plus the Wii Remote pointer, a USB mouse and a USB keyboard:
+Every controller GlowWii supports works here, plus the Wii Remote pointer, a USB mouse and a USB keyboard. You can also draw a doodle (pointer, mouse or D-Pad) and send it as the card instead of a PictoCard:
 
 | Controller | Select | Back | Review / Done | Shift / Theme | Steps / Symbols |
 | --- | --- | --- | --- | --- | --- |

@@ -17,6 +17,7 @@ typedef struct {
     int dark;            /* card background */
     int expression;      /* index into meta.expressions */
     int attach;          /* wii: 0 none, 1 picture, 2 PictoCard */
+    int doodle;          /* 1: the card is a doodle drawn on the Wii, 0: a full PictoCard */
     int letterhead;      /* index into meta.letterheads, -1 default */
     int mii;             /* index into miis, -1 none */
     char picture_name[128];
@@ -48,6 +49,13 @@ int osk_active(void);
 void osk_insert_text(const char *s);
 void osk_update(void *input);
 void osk_draw(int frame);
+
+/* doodle.c — doodle pad */
+typedef void (*doodle_cb)(const image_t *drawing);
+void doodle_open(doodle_cb cb);
+int doodle_active(void);
+void doodle_update(void *input);
+void doodle_draw(int frame);
 
 /* picker.c — list picker and file browser */
 typedef struct {

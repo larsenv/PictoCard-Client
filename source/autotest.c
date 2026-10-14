@@ -12,6 +12,7 @@
 static FILE *script;
 static int wait_frames;
 static int pointing, px, py;
+static u32 held_mask;
 int autotest_quit;
 
 typedef struct { const char *name; u32 bit; } btn_t;
@@ -87,6 +88,15 @@ void autotest_apply(input_t *in)
                 if (!strcmp(line + 6, BTNS[i].name)) in->down |= BTNS[i].bit;
             wait_frames = 6;
             break;
+        } else if (!strncmp(line, "hold ", 5) || !strncmp(line, "release ", 8)) {
+            int hold = line[0] == 'h';
+            for (unsigned i = 0; i < sizeof BTNS / sizeof *BTNS; i++)
+                if (!strcmp(line + (hold ? 5 : 8), BTNS[i].name)) {
+                    if (hold) { held_mask |= BTNS[i].bit; in->down |= BTNS[i].bit; }
+                    else held_mask &= ~BTNS[i].bit;
+                }
+            wait_frames = 2;
+            break;
         } else if (!strncmp(line, "type ", 5)) {
             for (const char *c = line + 5; *c; c++) autotest_push_key(0x04, *c == '~' ? '\n' : *c);
         } else if (!strncmp(line, "key ", 4)) {
@@ -98,6 +108,7 @@ void autotest_apply(input_t *in)
             in->pointer = 1;
             in->px = px;
             in->py = py;
+            in->held |= held_mask;
             wait_frames = 2;
             return;
         } else if (!strcmp(line, "nopoint")) {
@@ -113,6 +124,7 @@ void autotest_apply(input_t *in)
         }
     }
 pointer:
+    in->held |= held_mask;
     /* the script owns the pointer (Dolphin would otherwise feed in the host mouse) */
     in->pointer = pointing;
     if (pointing) {

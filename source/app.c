@@ -32,7 +32,7 @@ enum { SCR_CONNECT, SCR_COMPOSE, SCR_REVIEW, SCR_VERIFY, SCR_DONE };
 enum {
     F_METHOD = 1, F_REC_EMAIL, F_SENDER_NAME, F_SENDER_EMAIL, F_REC_WII, F_FRIEND, F_PICTURE, F_ATTACH,
     F_LETTERHEAD, F_MII, F_EXPRESSION, F_BACKGROUND, F_MESSAGE, F_CARD_TEXT, F_FONT, F_COLOR, F_REVIEW,
-    F_SEND, F_EDIT, F_CODE, F_VERIFY_SEND, F_VERIFY_BACK, F_ANOTHER, F_EXIT, F_RETRY, F_THEME
+    F_SEND, F_EDIT, F_CODE, F_VERIFY_SEND, F_VERIFY_BACK, F_ANOTHER, F_EXIT, F_RETRY, F_THEME, F_STYLE
 };
 enum { W_TABS, W_TEXT, W_AREA, W_SELECT, W_FILE, W_RADIO, W_BUTTON };
 
@@ -97,6 +97,9 @@ u32 draft_text_color(void)
 }
 
 static int makes_card(void) { return draft.method == 0 || draft.attach == 2; }
+/* a doodle replaces the whole PictoCard layout: no Mii, text, font or background on the picture */
+static int is_doodle(void) { return draft.doodle && makes_card(); }
+static int styled_card(void) { return makes_card() && !is_doodle(); }
 static int has_picture_field(void) { return draft.method == 0 || draft.attach != 0; }
 
 /* ── Draft → JSON ────────────────────────────────────────────────────────── */
@@ -124,6 +127,7 @@ char *draft_json(int for_send)
     cJSON_AddStringToObject(o, "textColor", hex);
     cJSON_AddStringToObject(o, "background", draft.dark ? "dark" : "light");
     if (meta.expression_count) cJSON_AddStringToObject(o, "miiExpression", meta.expressions[draft.expression].id);
+    if (is_doodle()) cJSON_AddStringToObject(o, "cardType", "doodle");
     cJSON_AddStringToObject(o, "wiiAttach", draft.attach == 1 ? "image" : draft.attach == 2 ? "card" : "none");
     cJSON_AddStringToObject(o, "letterhead", draft.letterhead >= 0 ? meta.letterheads[draft.letterhead].id : "");
     if (has_picture_field()) {
@@ -131,7 +135,7 @@ char *draft_json(int for_send)
         else if (draft.preview_jpeg) add_b64(o, "image", draft.preview_jpeg, draft.preview_len);
     }
     if (draft.mii >= 0) {
-        if (makes_card()) add_b64(o, "mii", miis[draft.mii].data, MII_SIZE);
+        if (styled_card()) add_b64(o, "mii", miis[draft.mii].data, MII_SIZE);
         if (wii) add_b64(o, "wiiMii", miis[draft.mii].data, MII_SIZE);
     }
     if (for_send) {
@@ -148,6 +152,8 @@ char *draft_json(int for_send)
 
 /* ── Picture loading ─────────────────────────────────────────────────────── */
 
+static void store_picture(const image_t *img, const char *name);
+
 static void load_picture(const char *path)
 {
     size_t len;
@@ -162,13 +168,20 @@ static void load_picture(const char *path)
         show_alert("That file is not a photo PictoCard can read. Choose a JPEG, PNG, WebP, GIF or BMP.", 1);
         return;
     }
+    const char *name = strrchr(path, '/');
+    store_picture(img, name ? name + 1 : path);
+    image_free(img);
+}
+
+/* Encode a decoded picture (or doodle) as the draft's full-size, preview and thumbnail images. */
+static void store_picture(const image_t *img, const char *name)
+{
     size_t full_len = 0, prev_len = 0;
     unsigned char *full = image_encode_jpeg(img, 88, &full_len);
     image_t *small = image_fit(img, 720, 720);
     unsigned char *prev = small ? image_encode_jpeg(small, 80, &prev_len) : NULL;
     image_t *thumb = image_fit(img, 64, 48);
     image_free(small);
-    image_free(img);
     if (!full || !prev) {
         free(full);
         free(prev);
@@ -184,9 +197,32 @@ static void load_picture(const char *path)
     draft.preview_jpeg = prev;
     draft.preview_len = prev_len;
     draft.thumb = thumb;
-    const char *name = strrchr(path, '/');
-    snprintf(draft.picture_name, sizeof draft.picture_name, "%s", name ? name + 1 : path);
+    snprintf(draft.picture_name, sizeof draft.picture_name, "%s", name);
     draft_changed();
+}
+
+static void store_doodle(const image_t *drawing)
+{
+    store_picture(drawing, "Your doodle");
+}
+
+/* A photo is not a doodle, so switching the card style starts the picture over. */
+static void clear_picture(void)
+{
+    free(draft.picture_jpeg);
+    free(draft.preview_jpeg);
+    image_free(draft.thumb);
+    draft.picture_jpeg = draft.preview_jpeg = NULL;
+    draft.picture_len = draft.preview_len = 0;
+    draft.thumb = NULL;
+    draft.picture_name[0] = 0;
+}
+
+static void set_style(int doodle)
+{
+    if (draft.doodle == doodle) return;
+    draft.doodle = doodle;
+    clear_picture();
 }
 
 /* ── Widget layout ───────────────────────────────────────────────────────── */
@@ -235,17 +271,22 @@ static void build_widgets(void)
         add(F_FRIEND, W_BUTTON, 0, NULL, friend_hint(), 34, 0);
     }
     if (wii) add(F_ATTACH, W_SELECT, 1, "Attachment", NULL, 52, 0);
-    if (has_picture_field())
-        add(F_PICTURE, W_FILE, 1, wii && draft.attach == 1 ? "Picture to attach" : "Card picture",
-            "Any photo on your SD card or USB drive.", 62, 0);
+    if (makes_card()) add(F_STYLE, W_SELECT, 1, "Card style", NULL, 52, 0);
+    if (has_picture_field()) {
+        if (is_doodle())
+            add(F_PICTURE, W_FILE, 1, "Your doodle", "Draw with the pointer, a USB mouse or the D-Pad.", 62, 0);
+        else
+            add(F_PICTURE, W_FILE, 1, wii && draft.attach == 1 ? "Picture to attach" : "Card picture",
+                "Any photo on your SD card or USB drive.", 62, 0);
+    }
     if (wii) add(F_LETTERHEAD, W_SELECT, 1, "Letterhead", NULL, 52, 0);
-    add(F_MII, W_SELECT, 1, wii ? "Your Mii" : "Mii on your card", NULL, 52, 0);
-    if (draft.mii >= 0 && makes_card()) add(F_EXPRESSION, W_SELECT, 1, "Mii expression", NULL, 52, 0);
-    if (makes_card()) add(F_BACKGROUND, W_RADIO, 1, "Card background", NULL, 46, 0);
-    add(F_MESSAGE, W_AREA, 2, "Message", NULL, 18 + 96, 0);
-    if (wii && draft.attach == 2)
+    if (wii || styled_card()) add(F_MII, W_SELECT, 1, wii ? "Your Mii" : "Mii on your card", NULL, 52, 0);
+    if (draft.mii >= 0 && styled_card()) add(F_EXPRESSION, W_SELECT, 1, "Mii expression", NULL, 52, 0);
+    if (styled_card()) add(F_BACKGROUND, W_RADIO, 1, "Card background", NULL, 46, 0);
+    add(F_MESSAGE, W_AREA, 2, is_doodle() && !wii ? "Message (optional, sent with your doodle)" : "Message", NULL, 18 + 96, 0);
+    if (wii && draft.attach == 2 && !is_doodle())
         add(F_CARD_TEXT, W_AREA, 2, "Card text", "Leave empty to use the letter's message.", 18 + 74, 0);
-    if (makes_card()) {
+    if (styled_card()) {
         add(F_FONT, W_SELECT, 2, "Font", NULL, 52, 1);
         add(F_COLOR, W_SELECT, 2, "Text Color", NULL, 52, 2);
     }
@@ -300,6 +341,7 @@ static const char *select_value(int id, u32 *swatch, int *has_swatch)
     *has_swatch = 0;
     switch (id) {
     case F_ATTACH: return attach_name(draft.attach);
+    case F_STYLE: return draft.doodle ? "Doodle (your drawing is the card)" : "PictoCard (picture and message)";
     case F_LETTERHEAD:
         if (draft.letterhead < 0) return "Default (plain letter)";
         snprintf(buf, sizeof buf, "%s", meta.letterheads[draft.letterhead].name);
@@ -330,6 +372,7 @@ static void cycle(int id, int dir)
         if (focus != F_METHOD) focus = F_METHOD;
         break;
     case F_ATTACH: draft.attach = (draft.attach + 3 + dir) % 3; break;
+    case F_STYLE: set_style(!draft.doodle); break;
     case F_LETTERHEAD:
         if (!meta.letterhead_count) return;
         draft.letterhead += dir;
@@ -369,6 +412,7 @@ static void picked(int value)
 {
     switch (pick_field) {
     case F_ATTACH: draft.attach = value; break;
+    case F_STYLE: set_style(value); break;
     case F_LETTERHEAD: draft.letterhead = value; break;
     case F_MII: draft.mii = value; break;
     case F_EXPRESSION: draft.expression = value; break;
@@ -394,6 +438,18 @@ static void open_picker(int id)
             n++;
         }
         sel = draft.attach;
+        break;
+    case F_STYLE:
+        title = "Card style";
+        snprintf(pick_items[n].label, 96, "PictoCard (picture and message)");
+        pick_items[n].value = 0;
+        pick_items[n].header = pick_items[n].has_color = 0;
+        n++;
+        snprintf(pick_items[n].label, 96, "Doodle (your drawing is the card)");
+        pick_items[n].value = 1;
+        pick_items[n].header = pick_items[n].has_color = 0;
+        n++;
+        sel = draft.doodle;
         break;
     case F_LETTERHEAD: {
         title = "Letterhead";
@@ -505,7 +561,7 @@ static const char *validate(void)
         if (!strchr(draft.recipient_email, '@')) return "Please enter a valid recipient email address.";
         if (!draft.sender_name[0]) return "Your name is required.";
         if (!strchr(draft.sender_email, '@')) return "A valid sender email is required for verification.";
-        if (!draft.picture_jpeg) return "Please choose a picture for your card.";
+        if (!draft.picture_jpeg) return draft.doodle ? "Please draw a doodle for your card." : "Please choose a picture for your card.";
     } else {
         if (!meta.wii_enabled) return "Wii delivery isn't set up yet. Please check back soon.";
         if (strlen(draft.recipient_wii) != 16) return "Enter the 16-digit Wii Number.";
@@ -561,7 +617,10 @@ static void activate(int id)
     case F_REC_EMAIL: case F_SENDER_NAME: case F_SENDER_EMAIL: case F_REC_WII: case F_MESSAGE: case F_CARD_TEXT: case F_CODE:
         edit_text(id);
         break;
-    case F_PICTURE: files_open(load_picture); break;
+    case F_PICTURE:
+        if (is_doodle()) doodle_open(store_doodle);
+        else files_open(load_picture);
+        break;
     case F_BACKGROUND: cycle(id, 1); break;
     case F_FRIEND:
         if (!wii_number[0]) show_alert("This Wii's number could not be read. Add PictoCard from the Message Board's address book instead.", 1);
@@ -668,11 +727,13 @@ static void draw_widget(widget_t *w, int ox, int oy)
             tx += 64 + 6;
         }
         int bw = 86;
+        int doodle = is_doodle();
         text_draw_fit(FONT_BOLD, 14, tx, box_y + 6, w->w - (tx - x) - bw - 16, T.text,
-                      draft.picture_name[0] ? draft.picture_name : "Choose a picture");
+                      draft.picture_name[0] ? draft.picture_name : doodle ? "Draw your doodle" : "Choose a picture");
         text_draw_fit(FONT_REGULAR, 12, tx, box_y + 22, w->w - (tx - x) - bw - 16, T.muted,
-                      draft.picture_name[0] ? "Press A to choose another" : "From your SD card or USB drive");
-        ui_button(x + w->w - bw - 8, box_y + (box_h - 28) / 2, bw, 28, "Browse", 0, 0, 0);
+                      draft.picture_name[0] ? (doodle ? "Press A to draw it again" : "Press A to choose another")
+                                            : doodle ? "On a blank canvas" : "From your SD card or USB drive");
+        ui_button(x + w->w - bw - 8, box_y + (box_h - 28) / 2, bw, 28, doodle ? "Draw" : "Browse", 0, 0, 0);
         break;
     }
     case W_RADIO:
@@ -1293,6 +1354,7 @@ void app_run(void)
         if (osk_active()) osk_update(&in);
         else if (picker_active()) picker_update(&in);
         else if (files_active()) files_update(&in);
+        else if (doodle_active()) doodle_update(&in);
         else if (busy_modal) {
             key_event ev;
             while (input_key(&ev)) {}
@@ -1312,7 +1374,7 @@ void app_run(void)
             case SCR_DONE: done_update(&in); break;
             }
         }
-        if ((in.down & BTN_MINUS) && !osk_active() && !picker_active() && !files_active() && !busy_modal &&
+        if ((in.down & BTN_MINUS) && !osk_active() && !picker_active() && !files_active() && !doodle_active() && !busy_modal &&
             screen != SCR_COMPOSE && screen != SCR_CONNECT)
             activate(F_THEME);
         if (alert_frames > 0 && (in.down & ~BTN_DIRS) && !busy_modal) alert_frames = alert_frames > 60 ? 60 : alert_frames;
@@ -1356,6 +1418,7 @@ void app_run(void)
         if (osk_active()) osk_draw(frame);
         else if (picker_active()) picker_draw(frame);
         else if (files_active()) files_draw(frame);
+        else if (doodle_active()) doodle_draw(frame);
         if (busy_modal) draw_busy();
 
 #ifdef AUTOTEST

@@ -48,9 +48,9 @@ void ui_header(int light)
     gfx_blit(img_logo, 24, 6);
     int bx = SW - 24 - 92;
     gfx_frame(bx, 13, 92, 26, RADIUS, T.elev, T.input_border, 1);
-    text_draw_center(FONT_REGULAR, 12, bx, 14, 92, T.text, light ? "Dark mode" : "Light mode");
+    text_draw_center(FONT_REGULAR, 12, bx, 18, 92, T.text, light ? "Dark mode" : "Light mode");
     int nw = text_width(FONT_BOLD, 14, "Create a card");
-    text_draw(FONT_BOLD, 14, bx - 22 - nw, 14, T.accent, "Create a card");
+    text_draw(FONT_BOLD, 14, bx - 22 - nw, 17, T.accent, "Create a card");
     gfx_fill(0, 52, SW, 1, T.input_border);
     gfx_fill(0, 53, SW, 1, 0x56899f);
     stripe(0, 54, SW, 10);

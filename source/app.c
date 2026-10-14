@@ -128,7 +128,7 @@ char *draft_json(int for_send)
     cJSON_AddStringToObject(o, "background", draft.dark ? "dark" : "light");
     if (meta.expression_count) cJSON_AddStringToObject(o, "miiExpression", meta.expressions[draft.expression].id);
     if (is_doodle()) cJSON_AddStringToObject(o, "cardType", "doodle");
-    cJSON_AddStringToObject(o, "wiiAttach", draft.attach == 1 ? "image" : draft.attach == 2 ? "card" : "none");
+    cJSON_AddStringToObject(o, "wiiAttach", draft.attach == 1 || draft.attach == 3 ? "image" : draft.attach == 2 ? "card" : "none");
     cJSON_AddStringToObject(o, "letterhead", draft.letterhead >= 0 ? meta.letterheads[draft.letterhead].id : "");
     if (has_picture_field()) {
         if (for_send && draft.picture_jpeg) add_b64(o, "image", draft.picture_jpeg, draft.picture_len);
@@ -218,6 +218,24 @@ static void clear_picture(void)
     draft.picture_name[0] = 0;
 }
 
+/* A picture from the SD card is not one from the Message Board, so switching between them starts over. */
+static void set_attach(int attach)
+{
+    int from = draft.attach;
+    draft.attach = attach;
+    if ((from == 1 && attach == 3) || (from == 3 && attach == 1)) clear_picture();
+}
+
+static void store_message_board_picture(const image_t *picture)
+{
+    store_picture(picture, "Message Board picture");
+}
+
+static void message_board_error(const char *message)
+{
+    show_alert(message, 1);
+}
+
 static void set_style(int doodle)
 {
     if (draft.doodle == doodle) return;
@@ -276,14 +294,17 @@ static void build_widgets(void)
         if (is_doodle())
             add(F_PICTURE, W_FILE, 1, "Your doodle", "Draw with the pointer, a USB mouse or the D-Pad.", 62, 0);
         else
-            add(F_PICTURE, W_FILE, 1, wii && draft.attach == 1 ? "Picture to attach" : "Card picture",
-                "Any photo on your SD card or USB drive.", 62, 0);
+            add(F_PICTURE, W_FILE, 1, wii && draft.attach == 1 ? "Picture to attach"
+                                       : wii && draft.attach == 3 ? "Picture from the Message Board" : "Card picture",
+                draft.attach == 3 && wii ? "A picture from a message on this Wii. It is sent on its own unless you add a message."
+                                         : wii && draft.attach == 2 ? "A photo from your SD card, USB drive or the Message Board." : "Any photo on your SD card or USB drive.", 62, 0);
     }
     if (wii) add(F_LETTERHEAD, W_SELECT, 1, "Letterhead", NULL, 52, 0);
     if (wii || styled_card()) add(F_MII, W_SELECT, 1, wii ? "Your Mii" : "Mii on your card", NULL, 52, 0);
     if (draft.mii >= 0 && styled_card()) add(F_EXPRESSION, W_SELECT, 1, "Mii expression", NULL, 52, 0);
     if (styled_card()) add(F_BACKGROUND, W_RADIO, 1, "Card background", NULL, 46, 0);
-    add(F_MESSAGE, W_AREA, 2, is_doodle() && !wii ? "Message (optional, sent with your doodle)" : "Message", NULL, 18 + 96, 0);
+    add(F_MESSAGE, W_AREA, 2, is_doodle() && !wii ? "Message (optional, sent with your doodle)"
+                              : wii && (draft.attach == 1 || draft.attach == 3) ? "Message (optional with a picture)" : "Message", NULL, 18 + 96, 0);
     if (wii && draft.attach == 2 && !is_doodle())
         add(F_CARD_TEXT, W_AREA, 2, "Card text", "Leave empty to use the letter's message.", 18 + 74, 0);
     if (styled_card()) {
@@ -333,7 +354,11 @@ static widget_t *find(int id)
 
 /* ── Values shown in selects ─────────────────────────────────────────────── */
 
-static const char *attach_name(int a) { return a == 1 ? "A picture" : a == 2 ? "A PictoCard" : "No attachment"; }
+static const char *attach_name(int a)
+{
+    return a == 1 ? "A picture from the SD card or USB drive" : a == 2 ? "A PictoCard"
+         : a == 3 ? "A picture from the Wii Message Board" : "No attachment";
+}
 
 static const char *select_value(int id, u32 *swatch, int *has_swatch)
 {
@@ -371,7 +396,7 @@ static void cycle(int id, int dir)
         draft.method = !draft.method;
         if (focus != F_METHOD) focus = F_METHOD;
         break;
-    case F_ATTACH: draft.attach = (draft.attach + 3 + dir) % 3; break;
+    case F_ATTACH: set_attach((draft.attach + 4 + dir) % 4); break;
     case F_STYLE: set_style(!draft.doodle); break;
     case F_LETTERHEAD:
         if (!meta.letterhead_count) return;
@@ -408,10 +433,12 @@ static void cycle(int id, int dir)
 /* ── Pickers ─────────────────────────────────────────────────────────────── */
 
 static int pick_field;
+static int pending_source = -1; /* 0 = SD/USB, 1 = Message Board; opened once the picker is gone */
 static void picked(int value)
 {
     switch (pick_field) {
-    case F_ATTACH: draft.attach = value; break;
+    case F_PICTURE: pending_source = value; return;
+    case F_ATTACH: set_attach(value); break;
     case F_STYLE: set_style(value); break;
     case F_LETTERHEAD: draft.letterhead = value; break;
     case F_MII: draft.mii = value; break;
@@ -428,10 +455,21 @@ static void open_picker(int id)
     const char *title = "";
     pick_field = id;
     int sel = 0;
+    for (int i = 0; i < 512; i++) pick_items[i].icon = NULL;
     switch (id) {
+    case F_PICTURE:
+        title = "Where is the picture?";
+        snprintf(pick_items[0].label, 96, "SD card or USB drive");
+        snprintf(pick_items[1].label, 96, "Wii Message Board");
+        for (int i = 0; i < 2; i++) {
+            pick_items[i].value = i;
+            pick_items[i].header = pick_items[i].has_color = 0;
+        }
+        n = 2;
+        break;
     case F_ATTACH:
         title = "Attachment";
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             snprintf(pick_items[n].label, 96, "%s", attach_name(i));
             pick_items[n].value = i;
             pick_items[n].header = pick_items[n].has_color = 0;
@@ -487,6 +525,7 @@ static void open_picker(int id)
             pick_items[n].color = mii_color(miis[i].color);
             pick_items[n].has_color = 1;
             pick_items[n].header = 0;
+            pick_items[n].icon = miis[i].face;
             n++;
         }
         sel = draft.mii;
@@ -547,6 +586,30 @@ static void edit_text(int id)
     }
 }
 
+/* Mii faces for the picker, fetched a few at a time once the app is connected. */
+#define FACES_PER_REQUEST 12
+static int faces_next, faces_failed;
+
+static void request_faces(void)
+{
+    if (api.busy || !meta.loaded || faces_failed || faces_next >= mii_count) return;
+    int n = mii_count - faces_next;
+    if (n > FACES_PER_REQUEST) n = FACES_PER_REQUEST;
+    cJSON *o = cJSON_CreateObject();
+    cJSON *list = cJSON_AddArrayToObject(o, "miis");
+    for (int i = 0; i < n; i++) {
+        char *b = base64_encode(miis[faces_next + i].data, MII_SIZE);
+        if (b) {
+            cJSON_AddItemToArray(list, cJSON_CreateString(b));
+            free(b);
+        }
+    }
+    cJSON_AddNumberToObject(o, "size", 48);
+    char *body = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (body && !api_faces(body, faces_next)) faces_failed = 1;
+}
+
 static void request_preview(void)
 {
     if (api.busy || !meta.loaded) return;
@@ -566,8 +629,10 @@ static const char *validate(void)
         if (!meta.wii_enabled) return "Wii delivery isn't set up yet. Please check back soon.";
         if (strlen(draft.recipient_wii) != 16) return "Enter the 16-digit Wii Number.";
         if (!wiino_valid(draft.recipient_wii)) return "That Wii Number doesn't look right. Please check it for typos.";
-        if (!draft.message[0]) return "A message is required for Wii mail.";
-        if (draft.attach && !draft.picture_jpeg) return "Please choose a picture to attach.";
+        if (!draft.message[0] && !((draft.attach == 1 || draft.attach == 3) && draft.picture_jpeg))
+            return "A message is required for Wii mail.";
+        if ((draft.attach == 1 || draft.attach == 3 || draft.attach == 2) && !draft.picture_jpeg)
+            return draft.attach == 3 ? "Please choose a picture from the Message Board." : "Please choose a picture to attach.";
     }
     int max = meta.max_text ? meta.max_text : 500;
     if (count_chars(draft.message) > max || count_chars(draft.card_text) > max) {
@@ -619,6 +684,8 @@ static void activate(int id)
         break;
     case F_PICTURE:
         if (is_doodle()) doodle_open(store_doodle);
+        else if (draft.method == 1 && draft.attach == 3) mb_open(store_message_board_picture, message_board_error);
+        else if (draft.method == 1 && draft.attach == 2) open_picker(F_PICTURE);
         else files_open(load_picture);
         break;
     case F_BACKGROUND: cycle(id, 1); break;
@@ -1260,6 +1327,21 @@ static void handle_finished(void)
         }
         return;
     }
+    if (job == JOB_FACES) {
+        for (int i = 0; i < api.face_count; i++) {
+            int m = api.face_first + i;
+            if (m < mii_count) {
+                image_free(miis[m].face);
+                miis[m].face = api.faces[i];
+            } else {
+                image_free(api.faces[i]);
+            }
+            api.faces[i] = NULL;
+        }
+        if (api.ok) faces_next = api.face_first + (api.face_count ? api.face_count : FACES_PER_REQUEST);
+        else faces_failed = 1; /* the picker simply keeps its colour swatches */
+        return;
+    }
     if (job == JOB_PREVIEW) {
         if (api.ok) {
             free_preview();
@@ -1350,6 +1432,12 @@ void app_run(void)
         input_poll(&in);
         if (in.down & BTN_HOME) break;
         if (api.finished) handle_finished();
+        if (pending_source >= 0 && !picker_active()) {
+            int source = pending_source;
+            pending_source = -1;
+            if (source == 1) mb_open(store_message_board_picture, message_board_error);
+            else files_open(load_picture);
+        }
 
         if (osk_active()) osk_update(&in);
         else if (picker_active()) picker_update(&in);
@@ -1384,6 +1472,9 @@ void app_run(void)
             requested_version != version && frame - changed_frame > 50)
             request_preview();
         if (pending_review && !api.busy && requested_version != version) request_preview();
+        /* Mii faces go last so the live preview always comes first */
+        if (screen == SCR_COMPOSE && !api.busy && !pending_review && (version == preview_version || requested_version == version))
+            request_faces();
 
         build_widgets();
         if (!find(focus) && screen == SCR_COMPOSE && focus != F_REVIEW) focus = F_METHOD;
@@ -1424,8 +1515,6 @@ void app_run(void)
 #ifdef AUTOTEST
         {
             extern int autotest_quit;
-            extern void autotest_after_draw(void);
-            autotest_after_draw();
             if (autotest_quit) quit = 2; /* power off so Dolphin stops and syncs the SD folder */
         }
 #endif

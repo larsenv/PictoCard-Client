@@ -24,7 +24,22 @@ static struct {
     int sel;
     int scroll; /* pixels */
     pick_cb cb;
+    pick_preview_cb preview;
+    void (*closed)(void);
+    image_t *thumb;
+    int thumb_for, idle, last_sel;
 } pk;
+
+static void picker_close(void)
+{
+    if (!pk.active && !pk.thumb && !pk.closed) return;
+    pk.active = 0;
+    image_free(pk.thumb);
+    pk.thumb = NULL;
+    void (*closed)(void) = pk.closed;
+    pk.closed = NULL;
+    if (closed) closed();
+}
 
 static int panel_geom(int *x, int *y, int *w, int *h)
 {
@@ -79,7 +94,11 @@ static void draw_list(const char *title, pick_item_t *items, int count, int sel,
         }
         if (i == sel) gfx_frame(lx, ry + 1, lw, ROW_H - 2, RADIUS, T.tab_bg, T.accent, 1);
         int tx = lx + 10;
-        if (it->has_color) {
+        if (it->icon) {
+            gfx_round(tx, ry + 3, 24, 24, 4, T.bg2);
+            gfx_stretch(it->icon, tx, ry + 3, 24, 24);
+            tx += 32;
+        } else if (it->has_color) {
             gfx_frame(tx, ry + 6, 18, 18, 4, it->color, T.input_border, 1);
             gfx_round(tx + 1, ry + 7, 16, 16, 3, it->color);
             tx += 26;
@@ -109,6 +128,16 @@ static int hover_row(input_t *in, int scroll, int count)
 /* ── List picker ─────────────────────────────────────────────────────────── */
 
 int picker_active(void) { return pk.active; }
+
+void picker_open_preview(const char *title, pick_item_t *items, int count, int selected_value, pick_cb cb,
+                         pick_preview_cb preview, void (*closed)(void))
+{
+    picker_open(title, items, count, selected_value, cb);
+    pk.preview = preview;
+    pk.closed = closed;
+    pk.thumb_for = -1;
+    pk.last_sel = -1;
+}
 
 void picker_open(const char *title, pick_item_t *items, int count, int selected_value, pick_cb cb)
 {
@@ -166,16 +195,39 @@ void picker_update(void *vin)
         }
     }
     if (in->down & (BTN_UP | BTN_DOWN | BTN_LEFT | BTN_RIGHT)) keep_visible(pk.sel, &pk.scroll, visible);
+    /* preview of the highlighted entry once the selection settles */
+    if (pk.preview) {
+        if (pk.sel != pk.last_sel) {
+            pk.last_sel = pk.sel;
+            pk.idle = 0;
+        } else {
+            pk.idle++;
+        }
+        if (pk.idle == 10 && pk.count && pk.thumb_for != pk.sel) {
+            image_free(pk.thumb);
+            pk.thumb = pk.preview(pk.items[pk.sel].value);
+            pk.thumb_for = pk.sel;
+        }
+    }
     if (in->down & BTN_A) {
         if (in->pointer && hover_row(in, pk.scroll, pk.count) < 0 &&
             (in->px < x || in->px > x + w || in->py < y || in->py > y + h)) {
-            pk.active = 0; /* clicked outside */
+            picker_close(); /* clicked outside */
             return;
         }
+        /* the callback runs while the list's resources (preview, Message Board data) are still open */
+        pick_cb cb = pk.cb;
+        int value = pk.count ? pk.items[pk.sel].value : 0, any = pk.count && cb;
+        void (*closed)(void) = pk.closed;
+        image_t *thumb = pk.thumb;
+        pk.closed = NULL;
+        pk.thumb = NULL;
         pk.active = 0;
-        if (pk.count && pk.cb) pk.cb(pk.items[pk.sel].value);
+        if (any) cb(value);
+        image_free(thumb);
+        if (closed) closed();
     } else if (in->down & BTN_B) {
-        pk.active = 0;
+        picker_close();
     }
 }
 
@@ -183,6 +235,14 @@ void picker_draw(int frame)
 {
     (void)frame;
     draw_list(pk.title, pk.items, pk.count, pk.sel, pk.scroll, "Nothing to choose from.", NULL);
+    if (pk.thumb && pk.thumb_for == pk.sel) {
+        int x, y, w, h;
+        panel_geom(&x, &y, &w, &h);
+        int tx = x + w - pk.thumb->w - 20, ty = y + h - pk.thumb->h - 18;
+        gfx_round(tx - 5, ty - 3, pk.thumb->w + 10, pk.thumb->h + 10, RADIUS, T.shadow);
+        gfx_frame(tx - 5, ty - 5, pk.thumb->w + 10, pk.thumb->h + 10, RADIUS, 0xFFFFFF, T.input_border, 1);
+        gfx_blit(pk.thumb, tx, ty);
+    }
     static const char *const hints[] = { "A", "Choose", "B", "Cancel", "<>", "Page" };
     ui_footer_hints(hints, 3);
 }

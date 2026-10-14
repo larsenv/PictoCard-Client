@@ -11,6 +11,7 @@ typedef struct {
     char creator[32];
     u8 color;           /* favourite colour 0..11 */
     u8 data[MII_SIZE];  /* RFLCharData, as sent in X-WiiFace */
+    struct image *face; /* rendered face for the Mii picker, filled in from the server */
 } mii_t;
 
 extern mii_t miis[MAX_MIIS];

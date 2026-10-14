@@ -134,6 +134,22 @@ static int do_preview(char *body)
     return 1;
 }
 
+static int do_faces(char *body)
+{
+    api.stage = STAGE_WAITING;
+    cJSON *json = call("POST", "mii-faces", body, strlen(body), NULL);
+    if (!json) return 0;
+    api.face_count = 0;
+    const cJSON *face;
+    cJSON_ArrayForEach(face, cJSON_GetObjectItemCaseSensitive(json, "faces"))
+    {
+        if (api.face_count >= 16) break;
+        api.faces[api.face_count++] = decode_b64_image(face); /* NULL when it could not be rendered */
+    }
+    cJSON_Delete(json);
+    return 1;
+}
+
 /* ── Proof of work ───────────────────────────────────────────────────────── */
 
 /* Fetch a challenge for `purpose` and solve it; fills pow_json with
@@ -241,6 +257,7 @@ static void *run(void *arg)
     case JOB_SEND: ok = do_send(current.body); break;
     case JOB_VERIFY: ok = do_verify(current.arg1, current.arg2); break;
     case JOB_FRIEND: ok = do_friend(current.arg1); break;
+    case JOB_FACES: ok = do_faces(current.body); break;
     }
     free(current.body);
     current.body = NULL;
@@ -272,6 +289,7 @@ static int start(int job, char *body, const char *a1, const char *a2)
     api.ok = 0;
     api.status = 0;
     api.card = NULL;
+    api.face_count = 0;
     api.letter_count = 0;
     api.finished = 0;
     api.job = job;
@@ -290,3 +308,9 @@ int api_preview(char *body) { return start(JOB_PREVIEW, body, NULL, NULL); }
 int api_send(char *body) { return start(JOB_SEND, body, NULL, NULL); }
 int api_verify(const char *ticket, const char *code) { return start(JOB_VERIFY, NULL, ticket, code); }
 int api_friend(const char *number) { return start(JOB_FRIEND, NULL, number, NULL); }
+int api_faces(char *body, int first)
+{
+    int ok = start(JOB_FACES, body, NULL, NULL);
+    if (ok) api.face_first = first;
+    return ok;
+}

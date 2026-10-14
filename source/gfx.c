@@ -3,6 +3,8 @@
 #include <math.h>
 #include <malloc.h>
 #include "gfx.h"
+#include "image.h"
+#include "pointer_png.h"
 
 int SW = 640, SH = 480;
 u32 *canvas;
@@ -68,55 +70,55 @@ void gfx_init(void)
 int gfx_widescreen(void) { return wide; }
 
 /* ── Cursor ──────────────────────────────────────────────────────────────── */
-static const char *CURSOR[] = {
-    "X...............",
-    "XX..............",
-    "XoX.............",
-    "XooX............",
-    "XoooX...........",
-    "XooooX..........",
-    "XoooooX.........",
-    "XooooooX........",
-    "XoooooooX.......",
-    "XooooooooX......",
-    "XoooooooooX.....",
-    "XooooooXXXXX....",
-    "XoooXooX........",
-    "XooXXooX........",
-    "XoX..XooX.......",
-    "XX...XooX.......",
-    "X.....XooX......",
-    "......XooX......",
-    ".......XX.......",
-};
-#define CURSOR_W 16
-#define CURSOR_H 19
-static u32 under[CURSOR_W * 2 * CURSOR_H * 2];
+/* The Wii pointer hand (Player 1) from PrimmR's Wii Pointer Cursors, https://primmr.dev/projects/wii-pointer-cursors/ */
+#define CURSOR_HOT_X 10
+#define CURSOR_HOT_Y 1
+#define UNDER_MAX 64
+static u32 under[UNDER_MAX * UNDER_MAX];
+static image_t *pointer_img;
+static int pointer_tried;
 
 static void cursor_draw(int cx, int cy, int save)
 {
-    for (int j = 0; j < CURSOR_H * 2; j++) {
-        int y = cy + j;
+    if (!pointer_tried) {
+        pointer_tried = 1;
+        pointer_img = image_decode(pointer_png, pointer_png_size, 128);
+        if (pointer_img && (pointer_img->w > UNDER_MAX || pointer_img->h > UNDER_MAX)) {
+            image_free(pointer_img);
+            pointer_img = NULL;
+        }
+    }
+    int w = pointer_img ? pointer_img->w : 12, h = pointer_img ? pointer_img->h : 12;
+    int x0 = cx - CURSOR_HOT_X, y0 = cy - CURSOR_HOT_Y;
+    for (int j = 0; j < h; j++) {
+        int y = y0 + j;
         if (y < 0 || y >= SH) continue;
-        for (int i = 0; i < CURSOR_W * 2; i++) {
-            int x = cx + i;
+        for (int i = 0; i < w; i++) {
+            int x = x0 + i;
             if (x < 0 || x >= SW) continue;
             u32 *p = &canvas[y * SW + x];
-            if (save == 1) under[j * CURSOR_W * 2 + i] = *p;
+            if (save == 1) under[j * UNDER_MAX + i] = *p;
             else if (save == 2) {
-                *p = under[j * CURSOR_W * 2 + i];
+                *p = under[j * UNDER_MAX + i];
                 continue;
             }
-            char c = CURSOR[j / 2][i / 2];
-            if (c == 'X') *p = 0x173644;
-            else if (c == 'o') *p = 0xFFFFFF;
+            if (!pointer_img) {
+                *p = 0xFFFFFF;
+                continue;
+            }
+            u32 c = pointer_img->px[j * w + i];
+            int a = c >> 24;
+            if (a) *p = gfx_mix(*p, c & 0xFFFFFF, a);
         }
     }
 }
 
 void gfx_present(int cursor, int cx, int cy)
 {
-    if (cursor) cursor_draw(cx - 1, cy - 1, 1);
+    if (cursor) cursor_draw(cx, cy, 1);
+#ifdef AUTOTEST
+    { extern void autotest_after_draw(void); autotest_after_draw(); } /* screenshots include the pointer */
+#endif
 
     which ^= 1;
     u32 *out = xfb[which];
@@ -148,7 +150,7 @@ void gfx_present(int cursor, int cx, int cy)
     VIDEO_SetNextFramebuffer(out);
     VIDEO_Flush();
 
-    if (cursor) cursor_draw(cx - 1, cy - 1, 2);
+    if (cursor) cursor_draw(cx, cy, 2);
 }
 
 /* ── Primitives ──────────────────────────────────────────────────────────── */

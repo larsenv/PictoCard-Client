@@ -57,17 +57,27 @@ int doodle_active(void);
 void doodle_update(void *input);
 void doodle_draw(int frame);
 
+/* mb.c — pictures from the Wii Message Board (NAND cdb.vff and SD card messages) */
+typedef void (*mb_cb)(const image_t *picture);
+void mb_open(mb_cb cb, void (*on_error)(const char *message));
+
 /* picker.c — list picker and file browser */
 typedef struct {
     char label[96];
     u32 color;
     int has_color;
     int header; /* group heading, not selectable */
+    image_t *icon; /* optional small picture (a Mii face), drawn in place of the colour swatch */
     int value;
 } pick_item_t;
 
 typedef void (*pick_cb)(int value);
 void picker_open(const char *title, pick_item_t *items, int count, int selected_value, pick_cb cb);
+/* Same, with a small preview of the highlighted entry (preview(value) returns an image the picker
+ * owns, or NULL) and a callback for when the list closes. */
+typedef image_t *(*pick_preview_cb)(int value);
+void picker_open_preview(const char *title, pick_item_t *items, int count, int selected_value, pick_cb cb,
+                         pick_preview_cb preview, void (*closed)(void));
 int picker_active(void);
 void picker_update(void *input);
 void picker_draw(int frame);

@@ -25,7 +25,7 @@ typedef struct {
     int expression_count;
 } meta_t;
 
-enum { JOB_NONE, JOB_CONNECT, JOB_PREVIEW, JOB_SEND, JOB_VERIFY, JOB_FRIEND };
+enum { JOB_NONE, JOB_CONNECT, JOB_PREVIEW, JOB_SEND, JOB_VERIFY, JOB_FRIEND, JOB_FACES };
 enum { STAGE_IDLE, STAGE_NETWORK, STAGE_CHALLENGE, STAGE_SOLVING, STAGE_UPLOADING, STAGE_WAITING, STAGE_DONE };
 
 typedef struct {
@@ -44,6 +44,9 @@ typedef struct {
     image_t *letter[8];
     int letter_count;
     int needs_image;
+    image_t *faces[16];        /* Mii faces, owned by the UI once finished */
+    int face_count;
+    int face_first;            /* index of the first Mii in the request */
     char ip[20];
 } api_state_t;
 
@@ -57,3 +60,5 @@ int api_preview(char *body);
 int api_send(char *body);
 int api_verify(const char *ticket, const char *code);
 int api_friend(const char *wii_number);
+/* body: {"miis":[base64...]}; the faces for Miis first.. come back in api.faces */
+int api_faces(char *body, int first);

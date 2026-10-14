@@ -5,7 +5,7 @@
  * Colors are 0xRRGGBB; images are 0xAARRGGBB. In 16:9 mode the canvas is
  * wider (852 px) and squeezed back to 640 so nothing looks stretched. */
 
-typedef struct {
+typedef struct image {
     int w, h;
     u32 *px;
 } image_t;

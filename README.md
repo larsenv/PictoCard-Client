@@ -64,5 +64,8 @@ Your Miis come from the Mii Channel database and the Wii Number from the WiiConn
 - Controller support from [GlowWii](https://github.com/larsenv/GlowWii), using [libwiidrc](https://github.com/FIX94/libwiidrc), [libwupc](https://github.com/FIX94/libwupc) and [libsicksaxis](https://github.com/xerpi/libsicksaxis)
 - [mbedTLS](https://github.com/Mbed-TLS/mbedtls), [cJSON](https://github.com/DaveGamble/cJSON), FreeType, libjpeg-turbo, libpng and libwebp
 - Pictochat font by Kirby3 (CC BY-SA 3.0), see `data/pictochat-license.txt`
+- Wii pointer cursor from [PrimmR's Wii Pointer Cursors](https://primmr.dev/projects/wii-pointer-cursors/)
+- Message Board reading (VFF and picture formats) from cdbackup, [libpatcher](https://github.com/WiiLink24/libpatcher) (MIT) and tiny-AES-c
+- Mii faces rendered by Arian Kordi's Mii renderer
 
 Licensed under the GNU GPL v3.

@@ -33,6 +33,7 @@ static struct {
     int undo_count;
     int color, size, tool;
     int drawing, last_x, last_y; /* stroke in progress, in canvas pixels */
+    int key_stroke;              /* Shift+arrow stroke from the keyboard */
     int cx, cy;                  /* cursor in screen pixels */
     doodle_cb cb;
 } dd;
@@ -190,10 +191,56 @@ void doodle_update(void *vin)
     int px, py, pw, ph, cvx, cvy;
     geometry(&px, &py, &pw, &ph, &cvx, &cvy);
 
+    /* USB keyboard: arrows move the cursor (Shift draws while moving, Ctrl moves a pixel),
+     * Space stamps a dot or fills, C/X change colour, [ ] the brush, D/F/E pick the tool,
+     * U or Ctrl+Z undoes, Enter uses the doodle and Esc cancels. */
     key_event ev;
     while (input_key(&ev)) {
+        int dx = 0, dy = 0, step = ev.ctrl ? 1 : 8;
+        if (ev.code == KEY_LEFT) dx = -step;
+        else if (ev.code == KEY_RIGHT) dx = step;
+        else if (ev.code == KEY_UP) dy = -step;
+        else if (ev.code == KEY_DOWN) dy = step;
+        if (dx || dy) {
+            int ox = dd.cx - cvx, oy = dd.cy - cvy;
+            dd.cx += dx;
+            dd.cy += dy;
+            if (dd.cx < 0) dd.cx = 0;
+            if (dd.cy < 0) dd.cy = 0;
+            if (dd.cx >= SW) dd.cx = SW - 1;
+            if (dd.cy >= SH) dd.cy = SH - 1;
+            int nx = dd.cx - cvx, ny = dd.cy - cvy;
+            if (ev.shift && dd.tool != TOOL_FILL && ox >= 0 && oy >= 0 && ox < CANVAS_W && oy < CANVAS_H &&
+                nx >= 0 && ny >= 0 && nx < CANVAS_W && ny < CANVAS_H) {
+                if (!dd.key_stroke) {
+                    push_undo();
+                    dd.key_stroke = 1;
+                }
+                line(ox, oy, nx, ny);
+            }
+            if (!ev.shift) dd.key_stroke = 0;
+            continue;
+        }
+        dd.key_stroke = 0;
+        int ccx = dd.cx - cvx, ccy = dd.cy - cvy;
+        char c = ev.ch;
         if (ev.code == KEY_ESC) in->down |= BTN_B;
-        else if (ev.ctrl && ev.code == KEY_ENTER) in->down |= BTN_PLUS;
+        else if (ev.code == KEY_ENTER || ev.code == KEY_KP_ENTER) in->down |= BTN_PLUS;
+        else if (ev.ctrl && ev.code == 0x1D) undo(); /* Ctrl+Z */
+        else if (c == ' ' && ccx >= 0 && ccy >= 0 && ccx < CANVAS_W && ccy < CANVAS_H) {
+            push_undo();
+            if (dd.tool == TOOL_FILL) flood_fill(ccx, ccy);
+            else disc(ccx, ccy, SIZES[dd.size], ink());
+        } else if (c == 'c' || c == 'C') {
+            dd.color = (dd.color + (c == 'c' ? 1 : 15)) % 16;
+            if (dd.tool == TOOL_ERASE) dd.tool = TOOL_DRAW;
+        } else if (c == 'x' || c == 'X') dd.color = (dd.color + 15) % 16;
+        else if (c == ']') dd.size = dd.size < 3 ? dd.size + 1 : 3;
+        else if (c == '[') dd.size = dd.size > 0 ? dd.size - 1 : 0;
+        else if (c == 'd' || c == 'D') dd.tool = TOOL_DRAW;
+        else if (c == 'f' || c == 'F') dd.tool = TOOL_FILL;
+        else if (c == 'e' || c == 'E') dd.tool = TOOL_ERASE;
+        else if (c == 'u' || c == 'U') undo();
     }
 
     if (in->pointer) {

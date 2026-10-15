@@ -1,0 +1,11 @@
+{
+  "comment": "Test friends for PictoCard-Wii. The Wii Numbers are test numbers from 'nwc24.py wiino --seed pictocard-friends'. Established friends can send letters to this Wii; 'mii' is an index into RFL_DB.dat (needs --rfl-db).",
+  "this_wii": "3529920276399831",
+  "friends": [
+    { "name": "PictoCard", "wii": "1753053886132727" },
+    { "name": "Alice", "wii": "8221117977214019", "mii": 0 },
+    { "name": "Bob", "wii": "8156702394665126" },
+    { "name": "Pending", "wii": "5102565666008132", "established": false },
+    { "name": "Erin", "email": "erin@example.com" }
+  ]
+}

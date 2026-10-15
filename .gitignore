@@ -9,3 +9,5 @@ dist/
 *.smdh
 *.map
 __pycache__/
+*.cia
+*.bnr

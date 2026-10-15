@@ -56,6 +56,17 @@ APP_DESCRIPTION	:=	Send picture cards by email or to a Wii
 APP_AUTHOR	:=	larsenv
 ICON		:=	icon.png
 
+# CIA packaging (needs makerom and bannertool on PATH)
+MAKEROM		?=	makerom
+BANNERTOOL	?=	bannertool
+RSF		:=	$(CURDIR)/app.rsf
+APP_PRODUCT_CODE	:=	CTR-P-PICT
+# Randomly generated unique ID; keep it fixed so updates install over old versions
+APP_UNIQUE_ID	:=	0x3C4B5
+BANNER_IMG	:=	$(CURDIR)/assets/banner.png
+BANNER_AUDIO	:=	$(CURDIR)/assets/banner-silence.wav
+CIA_TARGET	:=	PictoCard.cia
+
 CFLAGS	+=	$(INCLUDE) -D__3DS__ -Wno-format-truncation -DAPP_VERSION=\"$(VERSION)\" \
 		-DMBEDTLS_CONFIG_FILE=\"mbedtls_3ds.h\"
 
@@ -170,7 +181,7 @@ ifneq ($(ROMFS),)
 	export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: all clean dist
+.PHONY: all clean dist cia
 
 #---------------------------------------------------------------------------------
 all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(ROMFS_T3XFILES) $(T3XHFILES)
@@ -196,8 +207,17 @@ dist: all
 	@cd dist && zip -qr PictoCard-3DS.zip 3ds && rm -rf 3ds
 	@echo built ... dist/PictoCard-3DS.zip
 
+cia: all
+	@echo building banner ...
+	@$(BANNERTOOL) makebanner -i $(BANNER_IMG) -a $(BANNER_AUDIO) -o $(TARGET).bnr
+	@$(MAKEROM) -f cia -o $(CIA_TARGET) -elf $(TARGET).elf -rsf $(RSF) \
+		-icon $(TARGET).smdh -banner $(TARGET).bnr \
+		-DAPP_TITLE="$(APP_TITLE)" -DAPP_PRODUCT_CODE="$(APP_PRODUCT_CODE)" -DAPP_UNIQUE_ID="$(APP_UNIQUE_ID)"
+	@echo built ... $(CIA_TARGET)
+
 clean:
 	@echo clean ...
+	@rm -f $(TARGET).bnr $(CIA_TARGET)
 	@rm -rf dist
 	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf $(GFXBUILD)
 

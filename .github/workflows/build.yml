@@ -17,22 +17,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install host tools
-        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl bzip2 zip
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl bzip2 zip unzip
       - name: Build mbedTLS
         run: ./scripts/build_portlibs.sh
+      - name: Install makerom and bannertool
+        run: |
+          set -e
+          curl -sL https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip -o /tmp/makerom.zip
+          unzip -q -o /tmp/makerom.zip -d /tmp/makerom_dir
+          cp /tmp/makerom_dir/makerom /usr/local/bin/
+          curl -sL https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip -o /tmp/bannertool.zip
+          unzip -q -o /tmp/bannertool.zip -d /tmp/bannertool_dir
+          cp /tmp/bannertool_dir/linux-x86_64/bannertool /usr/local/bin/
+          chmod +x /usr/local/bin/makerom /usr/local/bin/bannertool
       - name: Version
         id: version
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Build
-        run: make dist VERSION=${{ steps.version.outputs.version }}
+        run: make dist cia VERSION=${{ steps.version.outputs.version }}
       - uses: actions/upload-artifact@v4
         with:
           name: PictoCard-3DS
           path: |
             dist/PictoCard-3DS.zip
             PictoCard.3dsx
+            PictoCard.cia
       - name: Move the latest tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -54,6 +65,8 @@ jobs:
           files: |
             dist/PictoCard-3DS.zip
             PictoCard.3dsx
+            PictoCard.cia
+            PictoCard.cia
       - name: Publish tagged release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
@@ -63,3 +76,5 @@ jobs:
           files: |
             dist/PictoCard-3DS.zip
             PictoCard.3dsx
+            PictoCard.cia
+            PictoCard.cia

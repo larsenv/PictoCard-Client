@@ -12,6 +12,8 @@ Tap **Picture** to choose where it comes from:
 
 ## Installing
 
+To install it as a home menu title, install `PictoCard.cia` from the releases page with FBI or similar. Otherwise:
+
 1. Extract `PictoCard-3DS.zip` to the root of your SD card. It adds `3ds/PictoCard/PictoCard.3dsx`.
 2. Open PictoCard from the Homebrew Launcher. The 3DS needs to be connected to the Internet.
 
@@ -56,6 +58,7 @@ You need devkitPro with devkitARM, libctru and citro2d (`3ds-dev`). Everything e
 ```bash
 ./scripts/build_portlibs.sh   # mbedTLS 3.6, into ./portlibs/3ds
 make                          # PictoCard.3dsx
+make cia                      # PictoCard.cia (needs makerom and bannertool on PATH)
 make dist                     # dist/PictoCard-3DS.zip
 ```
 

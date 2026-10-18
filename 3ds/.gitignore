@@ -1,0 +1,13 @@
+.DS_Store
+build/
+portlibs/
+dist/
+*.o
+*.d
+*.elf
+*.3dsx
+*.smdh
+*.map
+__pycache__/
+*.cia
+*.bnr

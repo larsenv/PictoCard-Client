@@ -1,0 +1,78 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitppc:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host tools and portlibs
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends python3 git ca-certificates curl bzip2 zip
+          dkp-pacman -Sy --noconfirm --needed wut wiiu-sdl2 ppc-freetype ppc-libpng ppc-libjpeg-turbo ppc-libwebp ppc-zlib ppc-bzip2 ppc-brotli
+      - name: Build mbedTLS and libmocha
+        run: ./scripts/build_portlibs.sh
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: make VERSION=${{ steps.version.outputs.version }} && make dist VERSION=${{ steps.version.outputs.version }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PictoCard-WiiU
+          path: |
+            dist/PictoCard-WiiU.zip
+            PictoCard.wuhb
+      - name: Move the latest tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git tag -f latest
+          git push -f origin latest
+      # Every push to main refreshes the "latest" release; tags like v1.0.0 also get their own release.
+      - name: Publish latest release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: PictoCard for Wii U (latest)
+          prerelease: false
+          make_latest: true
+          body: |
+            Latest build of PictoCard for Wii U from ${{ github.sha }}.
+
+            Extract PictoCard-WiiU.zip to the root of your SD card and open PictoCard from the Wii U Menu (needs Aroma).
+          files: |
+            dist/PictoCard-WiiU.zip
+            PictoCard.wuhb
+      # Notes come from docs/releases/<tag>.md when there is one.
+      - name: Release notes
+        if: github.ref_type == 'tag'
+        run: |
+          f="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$f" ]; then
+            mkdir -p docs/releases
+            echo "Extract PictoCard-WiiU.zip to the root of your SD card and open PictoCard from the Wii U Menu (needs Aroma)." > "$f"
+          fi
+      - name: Publish tagged release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PictoCard for Wii U ${{ steps.version.outputs.version }}
+          body_path: docs/releases/${{ github.ref_name }}.md
+          make_latest: false
+          files: |
+            dist/PictoCard-WiiU.zip
+            PictoCard.wuhb

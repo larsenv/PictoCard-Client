@@ -11,15 +11,24 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  wii:
     runs-on: ubuntu-latest
     container: devkitpro/devkitppc:latest
+    defaults:
+      run:
+        working-directory: wii
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - name: Install dolxz build dependencies
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends gcc libc6-dev liblzma-dev pkg-config curl ca-certificates
       - name: Install host tools and portlibs
         run: |
           apt-get update && apt-get install -y --no-install-recommends python3 git ca-certificates curl bzip2 zip
-          dkp-pacman -Sy --noconfirm --needed ppc-freetype ppc-libpng ppc-libjpeg-turbo ppc-libwebp ppc-zlib ppc-bzip2 ppc-brotli
+          # The image already ships these; pkg.devkitpro.org refuses requests from CI runners.
+          pkgs="ppc-freetype ppc-libpng ppc-libjpeg-turbo ppc-libwebp ppc-zlib ppc-bzip2 ppc-brotli"
+          dkp-pacman -Q $pkgs || dkp-pacman -Sy --noconfirm --needed $pkgs
       - name: Build mbedTLS and controller libraries
         run: ./scripts/build_portlibs.sh
       - name: Version
@@ -29,35 +38,123 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Build
         run: make VERSION=${{ steps.version.outputs.version }} && make dist VERSION=${{ steps.version.outputs.version }}
-      - uses: actions/upload-artifact@v4
+      - name: Collect
+        run: mkdir -p ../out && cp dist/PictoCard-Wii.zip PictoCard.dol ../out/
+      - uses: actions/upload-artifact@v5
         with:
           name: PictoCard-Wii
-          path: |
-            dist/PictoCard-Wii.zip
-            PictoCard.dol
-      - name: Move the latest tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+          if-no-files-found: error
+          path: out/
+
+  wiiu:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitppc:latest
+    defaults:
+      run:
+        working-directory: wiiu
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install host tools and portlibs
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git tag -f latest
-          git push -f origin latest
+          apt-get update && apt-get install -y --no-install-recommends python3 git ca-certificates curl bzip2 zip
+          # The image already ships these; pkg.devkitpro.org refuses requests from CI runners.
+          pkgs="wut wiiu-sdl2 ppc-freetype ppc-libpng ppc-libjpeg-turbo ppc-libwebp ppc-zlib ppc-bzip2 ppc-brotli"
+          dkp-pacman -Q $pkgs || dkp-pacman -Sy --noconfirm --needed $pkgs
+      - name: Build mbedTLS and libmocha
+        run: ./scripts/build_portlibs.sh
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: make VERSION=${{ steps.version.outputs.version }} && make dist VERSION=${{ steps.version.outputs.version }}
+      - name: Collect
+        run: mkdir -p ../out && cp dist/PictoCard-WiiU.zip PictoCard.wuhb ../out/
+      - uses: actions/upload-artifact@v5
+        with:
+          name: PictoCard-WiiU
+          if-no-files-found: error
+          path: out/
+
+  n3ds:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitarm:latest
+    defaults:
+      run:
+        working-directory: 3ds
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install host tools
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl bzip2 zip unzip
+      - name: Build mbedTLS
+        run: ./scripts/build_portlibs.sh
+      - name: Install makerom and bannertool
+        run: |
+          set -e
+          curl -sL https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip -o /tmp/makerom.zip
+          unzip -q -o /tmp/makerom.zip -d /tmp/makerom_dir
+          cp /tmp/makerom_dir/makerom /usr/local/bin/
+          curl -sL https://github.com/diasurgical/bannertool/releases/download/1.2.0/bannertool.zip -o /tmp/bannertool.zip
+          unzip -q -o /tmp/bannertool.zip -d /tmp/bannertool_dir
+          cp /tmp/bannertool_dir/linux-x86_64/bannertool /usr/local/bin/
+          chmod +x /usr/local/bin/makerom /usr/local/bin/bannertool
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: make dist cia VERSION=${{ steps.version.outputs.version }}
+      - name: Collect
+        run: mkdir -p ../out && cp dist/PictoCard-3DS.zip PictoCard.3dsx PictoCard.cia ../out/
+      - uses: actions/upload-artifact@v5
+        with:
+          name: PictoCard-3DS
+          if-no-files-found: error
+          path: out/
+
+  release:
+    needs: [wii, wiiu, n3ds]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: out
+          pattern: PictoCard-*
+          merge-multiple: true
       # Every push to main refreshes the "latest" release that pictocard.net links to;
       # tags like v1.2.0 also get their own release.
+      - name: Move the latest tag
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git tag -f latest
+          git push -f origin latest
       - name: Publish latest release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: PictoCard for Wii (latest)
+          name: PictoCard (latest)
           prerelease: false
           make_latest: true
+          fail_on_unmatched_files: true
           body: |
-            Latest build of PictoCard for Wii from ${{ github.sha }}.
+            Latest build of PictoCard from ${{ github.sha }}.
 
-            Extract PictoCard-Wii.zip to the root of your SD card or USB drive and open PictoCard from the Homebrew Channel.
+            - **Wii**: extract PictoCard-Wii.zip to the root of your SD card or USB drive and open PictoCard from the Homebrew Channel.
+            - **Wii U**: extract PictoCard-WiiU.zip to the root of your SD card and open PictoCard from the Wii U Menu (requires Aroma).
+            - **3DS**: extract PictoCard-3DS.zip to the root of your SD card and open PictoCard from the Homebrew Launcher, or install PictoCard.cia with FBI.
           files: |
-            dist/PictoCard-Wii.zip
-            PictoCard.dol
+            out/PictoCard-Wii.zip
+            out/PictoCard.dol
+            out/PictoCard-WiiU.zip
+            out/PictoCard.wuhb
+            out/PictoCard-3DS.zip
+            out/PictoCard.cia
+            out/PictoCard.3dsx
       # Notes come from docs/releases/<tag>.md when there is one.
       - name: Release notes
         if: github.ref_type == 'tag'
@@ -65,15 +162,21 @@ jobs:
           f="docs/releases/${GITHUB_REF_NAME}.md"
           if [ ! -f "$f" ]; then
             mkdir -p docs/releases
-            echo "Extract PictoCard-Wii.zip to the root of your SD card or USB drive and open PictoCard from the Homebrew Channel." > "$f"
+            echo "Extract the zip for your console to the root of your SD card and open PictoCard from the Homebrew Channel (Wii), the Wii U Menu (Wii U, needs Aroma) or the Homebrew Launcher (3DS)." > "$f"
           fi
       - name: Publish tagged release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          name: PictoCard for Wii ${{ steps.version.outputs.version }}
+          name: PictoCard ${{ github.ref_name }}
           body_path: docs/releases/${{ github.ref_name }}.md
           make_latest: false
+          fail_on_unmatched_files: true
           files: |
-            dist/PictoCard-Wii.zip
-            PictoCard.dol
+            out/PictoCard-Wii.zip
+            out/PictoCard.dol
+            out/PictoCard-WiiU.zip
+            out/PictoCard.wuhb
+            out/PictoCard-3DS.zip
+            out/PictoCard.cia
+            out/PictoCard.3dsx

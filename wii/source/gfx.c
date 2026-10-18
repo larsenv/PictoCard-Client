@@ -68,6 +68,9 @@ void gfx_init(void)
 }
 
 int gfx_widescreen(void) { return wide; }
+GXRModeObj *gfx_rmode(void) { return rmode; }
+/* the frame buffer that was presented last, i.e. the one on screen */
+void *gfx_xfb_shown(void) { return xfb[which]; }
 
 /* ── Cursor ──────────────────────────────────────────────────────────────── */
 /* The Wii pointer hand (Player 1) from PrimmR's Wii Pointer Cursors, https://primmr.dev/projects/wii-pointer-cursors/ */

@@ -15,6 +15,8 @@ extern u32 *canvas;
 
 void gfx_init(void);
 int gfx_widescreen(void);
+GXRModeObj *gfx_rmode(void);
+void *gfx_xfb_shown(void);
 void gfx_present(int cursor, int cx, int cy);
 
 /* gfx_clip pushes a clip rectangle (nested inside the current one); gfx_noclip pops it */

@@ -2,7 +2,7 @@
 
 Send [PictoCards](https://pictocard.net) from your Wii. Pick any photo from your SD card or USB drive, add a Mii from your Wii, and send it by email or as a letter to a Wii Message Board with WiiLink - with the same fonts, colors, backgrounds, letterheads and live preview as the website.
 
-**Download:** [PictoCard-Wii.zip](https://github.com/larsenv/PictoCard-Wii/releases/latest/download/PictoCard-Wii.zip) (or see [pictocard.net/wii-app](https://pictocard.net/wii-app))
+**Download:** [PictoCard-Wii.zip](https://github.com/larsenv/PictoCard-Client/releases/latest/download/PictoCard-Wii.zip) (or see [pictocard.net/app](https://pictocard.net/app))
 
 ## Installing
 
@@ -46,6 +46,8 @@ make dist                     # dist/PictoCard-Wii.zip for the Homebrew Channel
 ```
 
 `make WITH_WIIDRC=0 WITH_WUPC=0 WITH_SICKSAXIS=0` leaves out the Wii U GamePad, Wii U Pro Controller and DualShock 3 support.
+
+The app uses three libraries as submodules, so clone with `--recurse-submodules`: [libwiiinput](https://github.com/quatric/libwiiinput) (every controller, the USB keyboard and the USB mouse), [libwiiupdate](https://github.com/quatric/libwiiupdate) (the update check at start-up) and [libwiiosk](https://github.com/quatric/libwiiosk) (the Wii-style on-screen keyboard). libwiiosk holds 256 characters at most, so the long message fields keep the built-in keyboard; `make WITH_WIIOSK=0` uses the built-in keyboard everywhere. `make` writes `PictoCard-xz.dol`, a compressed copy that goes into the package as `boot.dol` (`NO_DOLXZ=1` skips it).
 
 `make AUTOTEST=1` builds a test version that replays `sd:/autotest.txt` (button presses, typing and pointer moves) and saves screenshots to `sd:/shots`, for exercising the app in Dolphin.
 

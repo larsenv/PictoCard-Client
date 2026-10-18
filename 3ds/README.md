@@ -2,6 +2,8 @@
 
 Send [PictoCards](https://pictocard.net) from your Nintendo 3DS. Take a picture with the 3DS's camera, pick one of your Nintendo 3DS Camera photos or any picture on the SD card, or draw a doodle on the touch screen; add one of your Miis, and send it by email or as a letter to a Wii Message Board with WiiLink - with the same fonts, colors, backgrounds, letterheads and live preview as the website. A port of PictoCard for Wii.
 
+**Download:** [PictoCard-3DS.zip](https://github.com/larsenv/PictoCard-Client/releases/latest/download/PictoCard-3DS.zip) or [PictoCard.cia](https://github.com/larsenv/PictoCard-Client/releases/latest/download/PictoCard.cia)
+
 ## Pictures
 
 Tap **Picture** to choose where it comes from:

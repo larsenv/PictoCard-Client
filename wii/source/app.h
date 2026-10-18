@@ -44,6 +44,7 @@ u32 draft_text_color(void);
 char *draft_json(int for_send);
 
 /* keyboard.c — on-screen keyboard */
+int osk_wii_edit(const char *label, char *buf, int buf_size, int max_chars, int multiline, int numeric, int email);
 void osk_open(const char *label, char *buf, int buf_size, int max_chars, int multiline, int numeric, int email);
 int osk_active(void);
 int osk_hover(void); /* the highlighted key, for the hover tick */

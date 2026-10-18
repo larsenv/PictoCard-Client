@@ -4,6 +4,7 @@
 #include <gccore.h>
 #include <fat.h>
 #include <ogc/lwp_watchdog.h>
+#include <wiiupdate.h>
 #include "app.h"
 #include "api.h"
 #include "font.h"
@@ -20,6 +21,8 @@ int main(int argc, char **argv)
     input_init();
     input_set_canvas(SW, SH);
     fatInitDefault();
+    WIIUPDATE_SetAppPath(argc > 0 ? argv[0] : NULL);
+    WIIUPDATE_Start("larsenv", "PictoCard-Client", APP_VERSION);
     settings_load(argc > 0 ? argv[0] : NULL);
     font_init();
     ui_init();

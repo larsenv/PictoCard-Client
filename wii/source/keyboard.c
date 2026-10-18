@@ -62,6 +62,14 @@ int osk_hover(void) { return k.row * 64 + k.col; }
 
 void osk_open(const char *label, char *buf, int buf_size, int max_chars, int multiline, int numeric, int email)
 {
+#ifdef HAVE_WIIOSK
+    /* libwiiosk edits the text in one blocking call. It holds 256 characters at most, so the
+     * longer message fields use the built-in keyboard below. */
+    if (max_chars <= 256) {
+        if (osk_wii_edit(label, buf, buf_size, max_chars, multiline, numeric, email)) draft_changed();
+        return;
+    }
+#endif
     memset(&k, 0, sizeof k);
     k.active = 1;
     k.label = label;

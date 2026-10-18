@@ -7,7 +7,7 @@ Last updated: 2026-10-15 (the port to Wii U)
 
 Repos:
 
-- `larsenv/PictoCard-WiiU` — this repo, the Aroma app (C, wut + SDL2). Commit and push as `larsenv`.
+- `larsenv/PictoCard-Client` — this repo; the Aroma app is `wiiu/` (C, wut + SDL2). It was `larsenv/PictoCard-WiiU` before the merge. Commit and push as `larsenv`.
 - PictoCard for Wii — the Homebrew Channel app it was ported from. Most of `source/` is shared with it (the files that
   differ are listed below), so fixes there can be carried across by hand.
 - PictoCard — the website and JSON API (`/api/v1`).

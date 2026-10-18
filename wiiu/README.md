@@ -4,7 +4,7 @@ Send [PictoCards](https://pictocard.net) from your Wii U. Pick any photo from yo
 
 This is the Wii U port of [PictoCard for Wii](https://pictocard.net/wii-app).
 
-**Download:** [PictoCard-WiiU.zip](https://github.com/larsenv/PictoCard-WiiU/releases/latest/download/PictoCard-WiiU.zip)
+**Download:** [PictoCard-WiiU.zip](https://github.com/larsenv/PictoCard-Client/releases/latest/download/PictoCard-WiiU.zip)
 
 ## Installing
 

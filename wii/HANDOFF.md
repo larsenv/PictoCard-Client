@@ -7,7 +7,7 @@ Last updated: 2026-10-14 (end of session) (end of session 1)
 
 Repos (both owned by `larsenv`, commit and push as `larsenv`):
 
-- `larsenv/PictoCard-Wii` — this repo, the Homebrew Channel app (C, devkitPPC). Local: `/Volumes/SSD/larsen/Documents/Git/PictoCard-Wii`.
+- `larsenv/PictoCard-Client` — this repo (the Wii app is `wii/`, the Wii U app `wiiu/`, the 3DS app `3ds/`). It was `larsenv/PictoCard-Wii`, `-WiiU` and `-3DS` before they were merged.
 - `larsenv/PictoCard` — the website and JSON API (Node). Local: `/Volumes/SSD/larsen/Documents/Git/PictoCard`. Push with `git push git@github.com:larsenv/PictoCard.git main` (the repo was renamed; `gh` is logged in as `quatric`, which cannot administer `larsenv/*`).
 
 ## Status

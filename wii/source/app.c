@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <gccore.h>
+#include <wiiupdate.h>
 #include "app.h"
 #include "api.h"
 #include "font.h"
@@ -1798,6 +1799,33 @@ static void play_sounds(const input_t *in, int modal_was, int hover_was, int scr
     }
 }
 
+/* ── Update popup ────────────────────────────────────────────────────────── */
+
+static wiiupdate_popup update_pop;
+static int update_open;
+
+static void draw_update_popup(void)
+{
+    const wiiupdate_popup *p = &update_pop;
+    int w = 440, h = p->progress >= 0 || p->detail[0] ? 150 : 124;
+    int x = (SW - w) / 2, y = (SH - h) / 2;
+    gfx_fill_alpha(0, 0, SW, SH, 0x000000, 110);
+    gfx_round(x, y + 3, w, h, RADIUS, T.shadow);
+    gfx_frame(x, y, w, h, RADIUS, T.bg, T.accent, 2);
+    text_draw_center(FONT_BOLD, 18, x, y + 14, w, T.text, p->title);
+    text_draw_center(FONT_REGULAR, 14, x, y + 50, w, T.text, p->text);
+    int row = y + 78;
+    if (p->progress >= 0) {
+        gfx_fill(x + 40, row + 4, w - 80, 10, T.input_border);
+        gfx_fill(x + 40, row + 4, (w - 80) * p->progress / 100, 10, T.accent);
+        row += 26;
+    } else if (p->detail[0]) {
+        text_draw_center(FONT_REGULAR, 14, x, row, w, T.accent, p->detail);
+        row += 26;
+    }
+    text_draw_center(FONT_REGULAR, 14, x, row + 8, w, T.muted, p->hint);
+}
+
 void app_run(void)
 {
     SYS_SetResetCallback(reset_cb);
@@ -1823,6 +1851,18 @@ void app_run(void)
         frame++;
         input_poll(&in);
         if (in.down & BTN_HOME) break;
+        /* The update popup takes the controls while it is up, and on the frame it closes. */
+        {
+            int was_open = update_open;
+            int ust = WIIUPDATE_Popup(in.down, &update_pop);
+            if (ust == WIIUPDATE_POPUP_EXIT) break;
+            update_open = ust == WIIUPDATE_POPUP_OPEN;
+            if (update_open || was_open) {
+                key_event ev;
+                while (input_key(&ev)) {}
+                in.down = in.held = 0;
+            }
+        }
         int modal_was = modal_id(), hover_was = hover_key(modal_was), screen_was = screen;
         if (api.finished) handle_finished();
         if (pending_source >= 0 && !picker_active()) {
@@ -1911,6 +1951,7 @@ void app_run(void)
         else if (files_active()) files_draw(frame);
         else if (doodle_active()) doodle_draw(frame);
         if (busy_modal) draw_busy();
+        if (update_open) draw_update_popup();
 
 #ifdef AUTOTEST
         {

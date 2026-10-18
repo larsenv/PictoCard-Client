@@ -133,6 +133,7 @@ int osk_wii_edit(const char *label, char *buf, int buf_size, int max_chars, int 
         INPUT_Update();
         osk_input in;
         OSK_ReadInputWii(&in);
+        (void)frame;
 #ifdef AUTOTEST
         autotest_osk(frame, &in, rmode, (const u32 *)fbs[cur ^ 1]);
 #endif

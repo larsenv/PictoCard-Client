@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "app.h"
+#ifdef HAVE_WIIOSK
+#include <wiiosk.h>
+#endif
 #include "input.h"
 #include "font.h"
 #include "ui.h"
@@ -63,9 +66,9 @@ int osk_hover(void) { return k.row * 64 + k.col; }
 void osk_open(const char *label, char *buf, int buf_size, int max_chars, int multiline, int numeric, int email)
 {
 #ifdef HAVE_WIIOSK
-    /* libwiiosk edits the text in one blocking call. It holds 256 characters at most, so the
-     * longer message fields use the built-in keyboard below. */
-    if (max_chars <= 256) {
+    /* libwiiosk edits the text in one blocking call. It holds OSK_MAX_CHARS (2048) characters at
+     * most, which covers every field; the built-in keyboard below is the fallback. */
+    if (max_chars <= OSK_MAX_CHARS) {
         if (osk_wii_edit(label, buf, buf_size, max_chars, multiline, numeric, email)) draft_changed();
         return;
     }

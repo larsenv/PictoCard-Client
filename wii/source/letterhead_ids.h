@@ -36,7 +36,6 @@ static const char *const LH_SHEET_IDS[] = {
     "mario-kart-wii-tournament-international",
     "mario-kart-wii-tournament-japan",
     "nintendo-channel",
-    "nintendo-channel-1",
     "nintendo-channel-2",
     "relaxuma-minna-de-goyururi-seikatsu",
     "riiconnect24-christmas",

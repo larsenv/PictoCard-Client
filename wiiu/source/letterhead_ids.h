@@ -36,6 +36,7 @@ static const char *const LH_SHEET_IDS[] = {
     "mario-kart-wii-tournament-international",
     "mario-kart-wii-tournament-japan",
     "nintendo-channel",
+    "nintendo-channel-2",
     "relaxuma-minna-de-goyururi-seikatsu",
     "riiconnect24-christmas",
     "riiconnect24-normal",
@@ -53,5 +54,6 @@ static const char *const LH_SHEET_IDS[] = {
     "wii-speak-channel-japanese",
     "wii-speak-channel-korean",
     "wii-speak-channel-spanish",
+    "wiilink",
 };
 #define LH_SHEET_COUNT (int)(sizeof LH_SHEET_IDS / sizeof LH_SHEET_IDS[0])

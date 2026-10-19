@@ -111,6 +111,7 @@ static const char *const LH_SHEET_IDS[] = {
     "relaxuma-minna-de-goyururi-seikatsu",
     "riiconnect24-christmas",
     "riiconnect24-normal",
+    "rssmii",
     "strong-bads-cool-game-for-attractive-people-1",
     "strong-bads-cool-game-for-attractive-people-2",
     "toki-tori",

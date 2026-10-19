@@ -9,6 +9,7 @@ static const char *const LH_SHEET_IDS[] = {
     "and-kensaku",
     "animal-crossing-city-folk-1",
     "animal-crossing-city-folk-2",
+    "blast-works",
     "bonsai-barber-complaint-1",
     "bonsai-barber-complaint-2",
     "bonsai-barber-complaint-3",

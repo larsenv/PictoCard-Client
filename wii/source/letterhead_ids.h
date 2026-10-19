@@ -32,6 +32,8 @@ static const char *const LH_SHEET_IDS[] = {
     "kirby-tv-channel-basic",
     "kirby-tv-channel-gift",
     "kirbys-epic-yarn",
+    "letterbomb",
+    "letterbomb-pride",
     "mario-kart-wii-normal-international",
     "mario-kart-wii-normal-japan",
     "mario-kart-wii-tournament-international",

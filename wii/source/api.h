@@ -5,7 +5,7 @@
 /* PictoCard's JSON API (/api/v1), called from a background thread so the
  * screen keeps animating. Only one job runs at a time. */
 
-#define LETTERHEAD_MAX 192
+#define LETTERHEAD_MAX 128
 typedef struct {
     char id[48];
     char name[64];

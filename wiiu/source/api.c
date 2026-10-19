@@ -110,7 +110,7 @@ static int do_connect(void)
     const cJSON *max = cJSON_GetObjectItemCaseSensitive(json, "maxTextLength");
     meta.max_text = cJSON_IsNumber(max) ? max->valueint : 500;
     meta.font_count = load_named(cJSON_GetObjectItemCaseSensitive(json, "fonts"), meta.fonts, 32);
-    meta.letterhead_count = load_named(cJSON_GetObjectItemCaseSensitive(json, "letterheads"), meta.letterheads, 128);
+    meta.letterhead_count = load_named(cJSON_GetObjectItemCaseSensitive(json, "letterheads"), meta.letterheads, LETTERHEAD_MAX);
     meta.expression_count = load_named(cJSON_GetObjectItemCaseSensitive(json, "expressions"), meta.expressions, 64);
     meta.loaded = 1;
     cJSON_Delete(json);

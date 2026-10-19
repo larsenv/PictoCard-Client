@@ -491,8 +491,8 @@ static void picked(int value)
 }
 
 /* letterhead gallery (filled in once the thumbnails arrive, see request_letterheads) */
-static image_t *lh_thumbs[128];
-static const char *lh_names[128], *lh_groups[128];
+static image_t *lh_thumbs[LETTERHEAD_MAX];
+static const char *lh_names[LETTERHEAD_MAX], *lh_groups[LETTERHEAD_MAX];
 static int lh_state;
 static void letterhead_picked(int value);
 static void request_letterheads(void);
@@ -542,14 +542,14 @@ static void open_picker(int id)
     case F_LETTERHEAD: {
         if (meta.letterhead_count) {
             /* the gallery opens at once; thumbnails fill in when they arrive */
-            for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
+            for (int i = 0; i < meta.letterhead_count && i < LETTERHEAD_MAX; i++) {
                 lh_names[i] = meta.letterheads[i].name;
                 lh_groups[i] = meta.letterheads[i].group;
             }
             if (lh_state < 0) lh_state = 0; /* try again */
             request_letterheads();
             gallery_open("Choose a letterhead", "Plain letter", lh_thumbs, lh_names, lh_groups,
-                         meta.letterhead_count < 128 ? meta.letterhead_count : 128, draft.letterhead, letterhead_picked);
+                         meta.letterhead_count, draft.letterhead, letterhead_picked);
             return;
         }
         title = "Letterhead";
@@ -685,12 +685,32 @@ static void request_faces(void)
 }
 
 /* Letterhead thumbnails for the gallery, fetched once as a single sheet. */
-static image_t *lh_thumbs[128];
-static const char *lh_names[128], *lh_groups[128];
+static image_t *lh_thumbs[LETTERHEAD_MAX];
+static const char *lh_names[LETTERHEAD_MAX], *lh_groups[LETTERHEAD_MAX];
 static int lh_state; /* 0 not asked, 1 asked, 2 loaded, -1 unavailable (the list is used) */
 
-/* Thumbnails built into the app (data/letterheads.jpg). Returns 1 when every
- * letterhead the server lists has one, so nothing needs downloading. */
+/* The letterheads in the order and groups the app was built with (letterhead_ids.h): the ones the
+ * server lists, then any newer than this app. */
+static void arrange_letterheads(void)
+{
+    static named_t sorted[LETTERHEAD_MAX];
+    static char used[LETTERHEAD_MAX];
+    int n = meta.letterhead_count < LETTERHEAD_MAX ? meta.letterhead_count : LETTERHEAD_MAX, k = 0;
+    memset(used, 0, sizeof used);
+    for (int s = 0; s < LH_SHEET_COUNT; s++)
+        for (int i = 0; i < n; i++)
+            if (!used[i] && !strcmp(LH_SHEET[s].id, meta.letterheads[i].id)) {
+                sorted[k] = meta.letterheads[i];
+                snprintf(sorted[k++].group, sizeof sorted[0].group, "%s", LH_SHEET[s].group);
+                used[i] = 1;
+            }
+    for (int i = 0; i < n; i++)
+        if (!used[i]) sorted[k++] = meta.letterheads[i];
+    memcpy(meta.letterheads, sorted, k * sizeof sorted[0]);
+}
+
+/* Thumbnails built into the app (data/letterheads.jpg). A letterhead newer than the app has none;
+ * its .arc is only downloaded when a letter using it is sent. */
 static int bundled_letterheads(void)
 {
     static int tried, complete;
@@ -699,14 +719,11 @@ static int bundled_letterheads(void)
     image_t *sheet = image_decode(letterheads_jpg, letterheads_jpg_size, 2048);
     if (!sheet) return 0;
     complete = 1;
-    for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
+    for (int i = 0; i < meta.letterhead_count && i < LETTERHEAD_MAX; i++) {
         int k = 0;
-        while (k < LH_SHEET_COUNT && strcmp(LH_SHEET_IDS[k], meta.letterheads[i].id)) k++;
+        while (k < LH_SHEET_COUNT && strcmp(LH_SHEET[k].id, meta.letterheads[i].id)) k++;
         int sx = (k % LH_SHEET_COLS) * LH_SHEET_W, sy = (k / LH_SHEET_COLS) * LH_SHEET_H;
-        if (k == LH_SHEET_COUNT || sx + LH_SHEET_W > sheet->w || sy + LH_SHEET_H > sheet->h) {
-            complete = 0; /* a letterhead newer than this app */
-            continue;
-        }
+        if (k == LH_SHEET_COUNT || sx + LH_SHEET_W > sheet->w || sy + LH_SHEET_H > sheet->h) continue;
         image_t *t = image_new(LH_SHEET_W, LH_SHEET_H);
         if (!t) {
             complete = 0;
@@ -741,7 +758,7 @@ static void letterheads_loaded(void)
         return;
     }
     int n = meta.letterhead_count < api.sheet_count ? meta.letterhead_count : api.sheet_count;
-    for (int i = 0; i < n && i < 128; i++) {
+    for (int i = 0; i < n && i < LETTERHEAD_MAX; i++) {
         int sx = (i % api.sheet_cols) * api.sheet_w, sy = (i / api.sheet_cols) * api.sheet_h;
         if (sx + api.sheet_w > sheet->w || sy + api.sheet_h > sheet->h) break;
         image_t *t = image_new(api.sheet_w, api.sheet_h);
@@ -1690,6 +1707,7 @@ static void handle_finished(void)
                 if (!strcmp(meta.fonts[i].id, "rodinntlg")) draft.font = i;
             if (strcmp(meta.min_client, APP_VERSION) > 0)
                 show_alert("A newer PictoCard for Wii U is available. Download it from pictocard.net/wii-app.", 1);
+            arrange_letterheads();
             draft_changed();
         }
         return;

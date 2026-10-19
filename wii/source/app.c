@@ -20,8 +20,8 @@
 #include "outbox.h"
 #include "gallery.h"
 #include "scroll.h"
-#include "settings.h"
-#include "cJSON.h"
+#include "letterhead_ids.h"
+#include "letterheads_jpg.h"
 #include "cJSON.h"
 #include "sfx.h"
 
@@ -660,65 +660,58 @@ static void request_faces(void)
 /* Letterhead thumbnails for the gallery, fetched once as a single sheet. */
 static int lh_state; /* 0 not asked, 1 asked, 2 loaded, -1 unavailable (the list is used) */
 
-/* The letterheads shipped in the app's folder (apps/PictoCard/letterheads/: manifest.json, sheet.jpg
- * and one .arc each). They give the list, its order and the thumbnails without a download. */
-static int local_letterheads(void)
+/* The letterheads in the order and groups the app was built with (letterhead_ids.h): the ones the
+ * server lists, then any newer than this app. */
+static void arrange_letterheads(void)
 {
-    static int tried, ok;
-    if (tried) return ok;
+    static named_t sorted[LETTERHEAD_MAX];
+    static char used[LETTERHEAD_MAX];
+    int n = meta.letterhead_count < LETTERHEAD_MAX ? meta.letterhead_count : LETTERHEAD_MAX, k = 0;
+    memset(used, 0, sizeof used);
+    for (int s = 0; s < LH_SHEET_COUNT; s++)
+        for (int i = 0; i < n; i++)
+            if (!used[i] && !strcmp(LH_SHEET[s].id, meta.letterheads[i].id)) {
+                sorted[k] = meta.letterheads[i];
+                snprintf(sorted[k++].group, sizeof sorted[0].group, "%s", LH_SHEET[s].group);
+                used[i] = 1;
+            }
+    for (int i = 0; i < n; i++)
+        if (!used[i]) sorted[k++] = meta.letterheads[i];
+    memcpy(meta.letterheads, sorted, k * sizeof sorted[0]);
+}
+
+/* Thumbnails built into the app (data/letterheads.jpg). A letterhead newer than the app has none;
+ * its .arc is only downloaded when a letter using it is sent. */
+static int bundled_letterheads(void)
+{
+    static int tried, complete;
+    if (tried) return complete;
     tried = 1;
-    char path[300];
-    snprintf(path, sizeof path, "%sletterheads/manifest.json", settings_dir());
-    size_t len;
-    char *text = (char *)read_file(path, &len, 256 * 1024);
-    if (!text) return 0;
-    text = realloc(text, len + 1);
-    text[len] = 0;
-    cJSON *json = cJSON_Parse(text);
-    free(text);
-    const cJSON *list = json ? cJSON_GetObjectItemCaseSensitive(json, "letterheads") : NULL;
-    int w = json ? (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "w")) : 0;
-    int h = json ? (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "h")) : 0;
-    int cols = json ? (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "cols")) : 0;
-    snprintf(path, sizeof path, "%sletterheads/sheet.jpg", settings_dir());
-    unsigned char *jpg = cJSON_IsArray(list) && w > 0 && h > 0 && cols > 0 ? read_file(path, &len, 4 * 1024 * 1024) : NULL;
-    image_t *sheet = jpg ? image_decode(jpg, len, 2048) : NULL;
-    free(jpg);
-    if (!sheet) {
-        cJSON_Delete(json);
-        return 0;
-    }
-    int n = 0;
-    const cJSON *it;
-    cJSON_ArrayForEach(it, list) {
-        if (n >= LETTERHEAD_MAX) break;
-        const cJSON *id = cJSON_GetObjectItemCaseSensitive(it, "id");
-        const cJSON *name = cJSON_GetObjectItemCaseSensitive(it, "name");
-        const cJSON *group = cJSON_GetObjectItemCaseSensitive(it, "group");
-        if (!cJSON_IsString(id) || !cJSON_IsString(name) || !cJSON_IsString(group)) continue;
-        int sx = (n % cols) * w, sy = (n / cols) * h;
-        image_t *t = sx + w <= sheet->w && sy + h <= sheet->h ? image_new(w, h) : NULL;
-        if (!t) break;
-        for (int y = 0; y < h; y++) memcpy(t->px + y * w, sheet->px + (sy + y) * sheet->w + sx, w * 4);
-        snprintf(meta.letterheads[n].id, sizeof meta.letterheads[n].id, "%s", id->valuestring);
-        snprintf(meta.letterheads[n].name, sizeof meta.letterheads[n].name, "%s", name->valuestring);
-        snprintf(meta.letterheads[n].group, sizeof meta.letterheads[n].group, "%s", group->valuestring);
-        image_free(lh_thumbs[n]);
-        lh_thumbs[n] = t;
-        n++;
+    image_t *sheet = image_decode(letterheads_jpg, letterheads_jpg_size, 2048);
+    if (!sheet) return 0;
+    complete = 1;
+    for (int i = 0; i < meta.letterhead_count && i < LETTERHEAD_MAX; i++) {
+        int k = 0;
+        while (k < LH_SHEET_COUNT && strcmp(LH_SHEET[k].id, meta.letterheads[i].id)) k++;
+        int sx = (k % LH_SHEET_COLS) * LH_SHEET_W, sy = (k / LH_SHEET_COLS) * LH_SHEET_H;
+        if (k == LH_SHEET_COUNT || sx + LH_SHEET_W > sheet->w || sy + LH_SHEET_H > sheet->h) continue;
+        image_t *t = image_new(LH_SHEET_W, LH_SHEET_H);
+        if (!t) {
+            complete = 0;
+            break;
+        }
+        for (int y = 0; y < t->h; y++) memcpy(t->px + y * t->w, sheet->px + (sy + y) * sheet->w + sx, t->w * 4);
+        image_free(lh_thumbs[i]);
+        lh_thumbs[i] = t;
     }
     image_free(sheet);
-    cJSON_Delete(json);
-    if (!n) return 0;
-    meta.letterhead_count = n;
-    ok = 1;
-    return 1;
+    return complete;
 }
 
 static void request_letterheads(void)
 {
     static int retry_at;
-    if (!lh_state && meta.loaded && local_letterheads()) lh_state = 2;
+    if (!lh_state && meta.loaded && meta.letterhead_count && bundled_letterheads()) lh_state = 2;
     if (lh_state < 0 && gallery_active() && frame >= retry_at) lh_state = 0;
     if (lh_state || api.busy || !meta.loaded || !meta.letterhead_count || (draft.method != 1 && !gallery_active())) return;
     lh_state = api_letterheads(120, 88, 8) ? 1 : -1;
@@ -891,19 +884,6 @@ static void send_from_outbox(void)
         return;
     }
     const char *lh_id = draft.letterhead >= 0 ? meta.letterheads[draft.letterhead].id : NULL;
-    if (lh_id && (!lh_arc || strcmp(lh_arc_id, lh_id))) {
-        char arc_path[300];
-        snprintf(arc_path, sizeof arc_path, "%sletterheads/%s.arc", settings_dir(), lh_id);
-        size_t arc_len;
-        unsigned char *arc = read_file(arc_path, &arc_len, 1024 * 1024);
-        if (arc) {
-            /* shipped in the app's folder: no download needed */
-            free(lh_arc);
-            lh_arc = arc;
-            lh_arc_len = arc_len;
-            snprintf(lh_arc_id, sizeof lh_arc_id, "%s", lh_id);
-        }
-    }
     if (lh_id && (!lh_arc || strcmp(lh_arc_id, lh_id))) {
         /* fetch the letterhead first; this runs again when it arrives */
         if (api.busy || !api_letterhead_arc(lh_id)) {
@@ -1699,6 +1679,7 @@ static void handle_finished(void)
                 if (!strcmp(meta.fonts[i].id, "rodinntlg")) draft.font = i;
             if (strcmp(meta.min_client, APP_VERSION) > 0)
                 show_alert("A newer PictoCard for Wii is available. Download it from pictocard.net/wii-app.", 1);
+            arrange_letterheads();
             draft_changed();
         }
         return;

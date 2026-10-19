@@ -5,6 +5,7 @@
 /* PictoCard's JSON API (/api/v1), called from a background thread so the
  * screen keeps animating. Only one job runs at a time. */
 
+#define LETTERHEAD_MAX 192
 typedef struct {
     char id[48];
     char name[64];
@@ -19,7 +20,7 @@ typedef struct {
     int max_text;
     named_t fonts[32];
     int font_count;
-    named_t letterheads[128];
+    named_t letterheads[LETTERHEAD_MAX];
     int letterhead_count;
     named_t expressions[64];
     int expression_count;

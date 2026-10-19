@@ -171,7 +171,6 @@ dist: $(BUILD)
 	@mkdir -p dist/apps/PictoCard
 	@cp $(BOOT_DOL) dist/apps/PictoCard/boot.dol
 	@cp apps/PictoCard/icon.png dist/apps/PictoCard/
-	@cp -R apps/PictoCard/letterheads dist/apps/PictoCard/
 	@sed -e "s/@VERSION@/$(VERSION)/" -e "s/@DATE@/$$(date -u +%Y%m%d%H%M%S)/" apps/PictoCard/meta.xml > dist/apps/PictoCard/meta.xml
 	@cd dist && rm -f PictoCard-Wii.zip && zip -qr PictoCard-Wii.zip apps
 	@echo built dist/PictoCard-Wii.zip

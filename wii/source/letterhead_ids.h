@@ -5,6 +5,7 @@
 #define LH_SHEET_H 88
 #define LH_SHEET_COLS 8
 static const char *const LH_SHEET_IDS[] = {
+    "action-replay-wii",
     "and-kensaku",
     "animal-crossing-city-folk-1",
     "animal-crossing-city-folk-2",

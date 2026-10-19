@@ -101,7 +101,7 @@ int osk_wii_edit(const char *label, char *buf, int buf_size, int max_chars, int 
     cfg.layout = numeric ? OSK_LAYOUT_NUMPAD : OSK_LAYOUT_QWERTY;
     cfg.screen_width = rmode->fbWidth;
     cfg.screen_height = rmode->efbHeight;
-    cfg.flags = OSK_FLAG_GX_READY;
+    cfg.flags = OSK_FLAG_GX_READY | OSK_FLAG_NO_POINTER; /* the app's own hand is drawn over it */
     if (gfx_widescreen()) cfg.flags |= OSK_FLAG_WIDESCREEN;
     if (multiline) cfg.flags |= OSK_FLAG_MULTILINE;
     else cfg.flags |= OSK_FLAG_NO_ENTER;
@@ -144,7 +144,14 @@ int osk_wii_edit(const char *label, char *buf, int buf_size, int max_chars, int 
         GX_DrawDone();
         GX_SetColorUpdate(GX_TRUE);
         GX_CopyDisp(fbs[cur], GX_TRUE);
-        GX_Flush();
+        GX_DrawDone(); /* the copy must be in the frame before the hand is drawn over it */
+        if (INPUT_CursorActive()) {
+            int px, py;
+            INPUT_CursorPosition(&px, &py);
+            DCInvalidateRange(fbs[cur], fb_size);
+            gfx_cursor_overlay(fbs[cur], px, py);
+            DCFlushRange(fbs[cur], fb_size);
+        }
         VIDEO_SetNextFramebuffer(fbs[cur]);
         VIDEO_Flush();
         VIDEO_WaitVSync();

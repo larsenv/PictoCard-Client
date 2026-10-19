@@ -20,8 +20,8 @@
 #include "outbox.h"
 #include "gallery.h"
 #include "scroll.h"
-#include "letterhead_ids.h"
-#include "letterheads_jpg.h"
+#include "settings.h"
+#include "cJSON.h"
 #include "cJSON.h"
 #include "sfx.h"
 
@@ -478,8 +478,8 @@ static void picked(int value)
 }
 
 /* letterhead gallery (filled in once the thumbnails arrive, see request_letterheads) */
-static image_t *lh_thumbs[128];
-static const char *lh_names[128], *lh_groups[128];
+static image_t *lh_thumbs[LETTERHEAD_MAX];
+static const char *lh_names[LETTERHEAD_MAX], *lh_groups[LETTERHEAD_MAX];
 static int lh_state;
 static void letterhead_picked(int value);
 static void request_letterheads(void);
@@ -527,14 +527,14 @@ static void open_picker(int id)
     case F_LETTERHEAD: {
         if (meta.letterhead_count) {
             /* the gallery opens at once; thumbnails fill in when they arrive */
-            for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
+            for (int i = 0; i < meta.letterhead_count && i < LETTERHEAD_MAX; i++) {
                 lh_names[i] = meta.letterheads[i].name;
                 lh_groups[i] = meta.letterheads[i].group;
             }
             if (lh_state < 0) lh_state = 0; /* try again */
             request_letterheads();
             gallery_open("Choose a letterhead", "Plain letter", lh_thumbs, lh_names, lh_groups,
-                         meta.letterhead_count < 128 ? meta.letterhead_count : 128, draft.letterhead, letterhead_picked);
+                         meta.letterhead_count, draft.letterhead, letterhead_picked);
             return;
         }
         title = "Letterhead";
@@ -658,45 +658,67 @@ static void request_faces(void)
 }
 
 /* Letterhead thumbnails for the gallery, fetched once as a single sheet. */
-static image_t *lh_thumbs[128];
-static const char *lh_names[128], *lh_groups[128];
 static int lh_state; /* 0 not asked, 1 asked, 2 loaded, -1 unavailable (the list is used) */
 
-/* Thumbnails built into the app (data/letterheads.jpg). Returns 1 when every
- * letterhead the server lists has one, so nothing needs downloading. */
-static int bundled_letterheads(void)
+/* The letterheads shipped in the app's folder (apps/PictoCard/letterheads/: manifest.json, sheet.jpg
+ * and one .arc each). They give the list, its order and the thumbnails without a download. */
+static int local_letterheads(void)
 {
-    static int tried, complete;
-    if (tried) return complete;
+    static int tried, ok;
+    if (tried) return ok;
     tried = 1;
-    image_t *sheet = image_decode(letterheads_jpg, letterheads_jpg_size, 2048);
-    if (!sheet) return 0;
-    complete = 1;
-    for (int i = 0; i < meta.letterhead_count && i < 128; i++) {
-        int k = 0;
-        while (k < LH_SHEET_COUNT && strcmp(LH_SHEET_IDS[k], meta.letterheads[i].id)) k++;
-        int sx = (k % LH_SHEET_COLS) * LH_SHEET_W, sy = (k / LH_SHEET_COLS) * LH_SHEET_H;
-        if (k == LH_SHEET_COUNT || sx + LH_SHEET_W > sheet->w || sy + LH_SHEET_H > sheet->h) {
-            complete = 0; /* a letterhead newer than this app */
-            continue;
-        }
-        image_t *t = image_new(LH_SHEET_W, LH_SHEET_H);
-        if (!t) {
-            complete = 0;
-            break;
-        }
-        for (int y = 0; y < t->h; y++) memcpy(t->px + y * t->w, sheet->px + (sy + y) * sheet->w + sx, t->w * 4);
-        image_free(lh_thumbs[i]);
-        lh_thumbs[i] = t;
+    char path[300];
+    snprintf(path, sizeof path, "%sletterheads/manifest.json", settings_dir());
+    size_t len;
+    char *text = (char *)read_file(path, &len, 256 * 1024);
+    if (!text) return 0;
+    text = realloc(text, len + 1);
+    text[len] = 0;
+    cJSON *json = cJSON_Parse(text);
+    free(text);
+    const cJSON *list = json ? cJSON_GetObjectItemCaseSensitive(json, "letterheads") : NULL;
+    int w = json ? (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "w")) : 0;
+    int h = json ? (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "h")) : 0;
+    int cols = json ? (int)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(json, "cols")) : 0;
+    snprintf(path, sizeof path, "%sletterheads/sheet.jpg", settings_dir());
+    unsigned char *jpg = cJSON_IsArray(list) && w > 0 && h > 0 && cols > 0 ? read_file(path, &len, 4 * 1024 * 1024) : NULL;
+    image_t *sheet = jpg ? image_decode(jpg, len, 2048) : NULL;
+    free(jpg);
+    if (!sheet) {
+        cJSON_Delete(json);
+        return 0;
+    }
+    int n = 0;
+    const cJSON *it;
+    cJSON_ArrayForEach(it, list) {
+        if (n >= LETTERHEAD_MAX) break;
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(it, "id");
+        const cJSON *name = cJSON_GetObjectItemCaseSensitive(it, "name");
+        const cJSON *group = cJSON_GetObjectItemCaseSensitive(it, "group");
+        if (!cJSON_IsString(id) || !cJSON_IsString(name) || !cJSON_IsString(group)) continue;
+        int sx = (n % cols) * w, sy = (n / cols) * h;
+        image_t *t = sx + w <= sheet->w && sy + h <= sheet->h ? image_new(w, h) : NULL;
+        if (!t) break;
+        for (int y = 0; y < h; y++) memcpy(t->px + y * w, sheet->px + (sy + y) * sheet->w + sx, w * 4);
+        snprintf(meta.letterheads[n].id, sizeof meta.letterheads[n].id, "%s", id->valuestring);
+        snprintf(meta.letterheads[n].name, sizeof meta.letterheads[n].name, "%s", name->valuestring);
+        snprintf(meta.letterheads[n].group, sizeof meta.letterheads[n].group, "%s", group->valuestring);
+        image_free(lh_thumbs[n]);
+        lh_thumbs[n] = t;
+        n++;
     }
     image_free(sheet);
-    return complete;
+    cJSON_Delete(json);
+    if (!n) return 0;
+    meta.letterhead_count = n;
+    ok = 1;
+    return 1;
 }
 
 static void request_letterheads(void)
 {
     static int retry_at;
-    if (!lh_state && meta.loaded && meta.letterhead_count && bundled_letterheads()) lh_state = 2;
+    if (!lh_state && meta.loaded && local_letterheads()) lh_state = 2;
     if (lh_state < 0 && gallery_active() && frame >= retry_at) lh_state = 0;
     if (lh_state || api.busy || !meta.loaded || !meta.letterhead_count || (draft.method != 1 && !gallery_active())) return;
     lh_state = api_letterheads(120, 88, 8) ? 1 : -1;
@@ -714,7 +736,7 @@ static void letterheads_loaded(void)
         return;
     }
     int n = meta.letterhead_count < api.sheet_count ? meta.letterhead_count : api.sheet_count;
-    for (int i = 0; i < n && i < 128; i++) {
+    for (int i = 0; i < n && i < LETTERHEAD_MAX; i++) {
         int sx = (i % api.sheet_cols) * api.sheet_w, sy = (i / api.sheet_cols) * api.sheet_h;
         if (sx + api.sheet_w > sheet->w || sy + api.sheet_h > sheet->h) break;
         image_t *t = image_new(api.sheet_w, api.sheet_h);
@@ -806,10 +828,12 @@ static void start_send(void)
     if (api_send(body)) busy_modal = 1;
 }
 
+static int pending_wii_keyboard; /* opened from the main loop once the picker is gone */
+
 static void picked_friend(int value)
 {
     if (value < 0) {
-        osk_open("Recipient Wii Number", draft.recipient_wii, sizeof draft.recipient_wii, 16, 0, 1, 0);
+        pending_wii_keyboard = 1;
         return;
     }
     snprintf(draft.recipient_wii, sizeof draft.recipient_wii, "%s", friends[value].number);
@@ -867,6 +891,19 @@ static void send_from_outbox(void)
         return;
     }
     const char *lh_id = draft.letterhead >= 0 ? meta.letterheads[draft.letterhead].id : NULL;
+    if (lh_id && (!lh_arc || strcmp(lh_arc_id, lh_id))) {
+        char arc_path[300];
+        snprintf(arc_path, sizeof arc_path, "%sletterheads/%s.arc", settings_dir(), lh_id);
+        size_t arc_len;
+        unsigned char *arc = read_file(arc_path, &arc_len, 1024 * 1024);
+        if (arc) {
+            /* shipped in the app's folder: no download needed */
+            free(lh_arc);
+            lh_arc = arc;
+            lh_arc_len = arc_len;
+            snprintf(lh_arc_id, sizeof lh_arc_id, "%s", lh_id);
+        }
+    }
     if (lh_id && (!lh_arc || strcmp(lh_arc_id, lh_id))) {
         /* fetch the letterhead first; this runs again when it arrives */
         if (api.busy || !api_letterhead_arc(lh_id)) {
@@ -1870,6 +1907,12 @@ void app_run(void)
             pending_source = -1;
             if (source == 1) mb_open(store_message_board_picture, message_board_error);
             else files_open(load_picture);
+        }
+
+        if (pending_wii_keyboard && !picker_active()) {
+            pending_wii_keyboard = 0;
+            osk_open("Recipient Wii Number", draft.recipient_wii, sizeof draft.recipient_wii, 16, 0, 1, 0);
+            in.down = in.held = 0;
         }
 
         if (osk_active()) osk_update(&in);

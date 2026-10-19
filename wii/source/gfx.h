@@ -18,6 +18,7 @@ int gfx_widescreen(void);
 GXRModeObj *gfx_rmode(void);
 void *gfx_xfb_shown(void);
 void gfx_present(int cursor, int cx, int cy);
+void gfx_cursor_overlay(void *fb, int cx, int cy); /* pointer hand into a YUY2 frame */
 
 /* gfx_clip pushes a clip rectangle (nested inside the current one); gfx_noclip pops it */
 void gfx_clip(int x, int y, int w, int h);

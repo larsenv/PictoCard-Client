@@ -44,3 +44,12 @@ void settings_save(void)
             settings.light ? "light" : "dark");
     fclose(f);
 }
+
+const char *settings_dir(void)
+{
+    static char dir[256];
+    snprintf(dir, sizeof dir, "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (slash) slash[1] = 0;
+    return dir;
+}

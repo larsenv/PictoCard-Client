@@ -116,6 +116,43 @@ static void cursor_draw(int cx, int cy, int save)
     }
 }
 
+/* Draws the pointer hand straight into a finished YUY2 frame buffer. Used while libwiiosk owns the
+ * screen (it renders with GX at fbWidth x efbHeight, so x is squeezed back in widescreen). */
+void gfx_cursor_overlay(void *fb, int cx, int cy)
+{
+    if (!pointer_tried) cursor_draw(-1000, -1000, 0);
+    if (!pointer_img) return;
+    int fbw = rmode->fbWidth, pairs = fbw / 2;
+    int h = pointer_img->h, w = pointer_img->w;
+    int dw = wide ? w * fbw / SW : w;
+    int hot_x = wide ? CURSOR_HOT_X * fbw / SW : CURSOR_HOT_X;
+    int top = cy - CURSOR_HOT_Y;
+    u32 *out = fb;
+    for (int j = 0; j < h; j++) {
+        int y = (top + j) * rmode->xfbHeight / rmode->efbHeight;
+        if (y < 0 || y >= rmode->xfbHeight) continue;
+        for (int i = 0; i < dw; i++) {
+            int x = cx - hot_x + i;
+            if (x < 0 || x >= fbw) continue;
+            u32 c = pointer_img->px[j * w + (wide ? i * SW / fbw : i)];
+            int a = c >> 24;
+            if (!a) continue;
+            int r = R(c), g = G(c), b = B(c);
+            int yy = ((16 << 8) + 66 * r + 129 * g + 25 * b + 128) >> 8;
+            int cb = ((128 << 8) - 38 * r - 74 * g + 112 * b + 128) >> 8;
+            int cr = ((128 << 8) + 112 * r - 94 * g - 18 * b + 128) >> 8;
+            u32 *d = &out[y * pairs + (x >> 1)];
+            u32 v = *d;
+            int y0 = v >> 24, ocb = (v >> 16) & 255, y1 = (v >> 8) & 255, ocr = v & 255;
+            if (x & 1) y1 += ((yy - y1) * a) / 255;
+            else y0 += ((yy - y0) * a) / 255;
+            ocb += ((cb - ocb) * a) / 255;
+            ocr += ((cr - ocr) * a) / 255;
+            *d = (y0 << 24) | (ocb << 16) | (y1 << 8) | ocr;
+        }
+    }
+}
+
 void gfx_present(int cursor, int cx, int cy)
 {
     if (cursor) cursor_draw(cx, cy, 1);

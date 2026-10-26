@@ -1,0 +1,11 @@
+.DS_Store
+build/
+portlibs/
+dist/
+*.o
+*.d
+*.elf
+*.nro
+*.nacp
+*.map
+__pycache__/

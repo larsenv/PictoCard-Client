@@ -77,6 +77,36 @@ jobs:
           if-no-files-found: error
           path: out/
 
+  switch:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    defaults:
+      run:
+        working-directory: switch
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install host tools and portlibs
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends python3 git ca-certificates curl bzip2 zip
+          pkgs="switch-freetype switch-libpng switch-libjpeg-turbo switch-libwebp switch-zlib switch-bzip2 switch-sdl2"
+          dkp-pacman -Q $pkgs || dkp-pacman -Sy --noconfirm --needed $pkgs
+      - name: Build mbedTLS
+        run: ./scripts/build_portlibs.sh
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: make VERSION=${{ steps.version.outputs.version }} && make dist VERSION=${{ steps.version.outputs.version }}
+      - name: Collect
+        run: mkdir -p ../out && cp dist/PictoCard-Switch.zip PictoCard.nro ../out/
+      - uses: actions/upload-artifact@v5
+        with:
+          name: PictoCard-Switch
+          if-no-files-found: error
+          path: out/
+
   n3ds:
     runs-on: ubuntu-latest
     container: devkitpro/devkitarm:latest
@@ -115,7 +145,7 @@ jobs:
           path: out/
 
   release:
-    needs: [wii, wiiu, n3ds]
+    needs: [wii, wiiu, switch, n3ds]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -146,12 +176,15 @@ jobs:
 
             - **Wii**: extract PictoCard-Wii.zip to the root of your SD card or USB drive and open PictoCard from the Homebrew Channel.
             - **Wii U**: extract PictoCard-WiiU.zip to the root of your SD card and open PictoCard from the Wii U Menu (requires Aroma).
+            - **Switch**: extract PictoCard-Switch.zip to the root of your SD card and open PictoCard from the Homebrew Menu.
             - **3DS**: extract PictoCard-3DS.zip to the root of your SD card and open PictoCard from the Homebrew Launcher, or install PictoCard.cia with FBI.
           files: |
             out/PictoCard-Wii.zip
             out/PictoCard.dol
             out/PictoCard-WiiU.zip
             out/PictoCard.wuhb
+            out/PictoCard-Switch.zip
+            out/PictoCard.nro
             out/PictoCard-3DS.zip
             out/PictoCard.cia
             out/PictoCard.3dsx
@@ -162,7 +195,7 @@ jobs:
           f="docs/releases/${GITHUB_REF_NAME}.md"
           if [ ! -f "$f" ]; then
             mkdir -p docs/releases
-            echo "Extract the zip for your console to the root of your SD card and open PictoCard from the Homebrew Channel (Wii), the Wii U Menu (Wii U, needs Aroma) or the Homebrew Launcher (3DS)." > "$f"
+            echo "Extract the zip for your console to the root of your SD card and open PictoCard from the Homebrew Channel (Wii), the Wii U Menu (Wii U, needs Aroma), the Homebrew Menu (Switch) or the Homebrew Launcher (3DS)." > "$f"
           fi
       - name: Publish tagged release
         if: github.ref_type == 'tag'
@@ -177,6 +210,8 @@ jobs:
             out/PictoCard.dol
             out/PictoCard-WiiU.zip
             out/PictoCard.wuhb
+            out/PictoCard-Switch.zip
+            out/PictoCard.nro
             out/PictoCard-3DS.zip
             out/PictoCard.cia
             out/PictoCard.3dsx

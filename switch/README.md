@@ -43,7 +43,7 @@ server=http://192.168.1.10:3000
 
 ## Building
 
-You need devkitPro with devkitA64, libnx, `switch-sdl2` and these portlibs: `switch-freetype switch-libpng switch-libjpeg-turbo switch-libwebp switch-zlib switch-bzip2`.
+You need devkitPro with devkitA64, libnx, `switch-sdl2` and these portlibs: `switch-freetype switch-harfbuzz switch-libpng switch-libjpeg-turbo switch-libwebp switch-zlib switch-bzip2`.
 
 ```bash
 ./scripts/build_portlibs.sh   # mbedTLS 3.6, into ./portlibs

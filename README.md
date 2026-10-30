@@ -1,6 +1,6 @@
 # PictoCard Client
 
-**Version:** 1.3.0
+**Version:** 1.3.1
 
 Homebrew apps for [PictoCard](https://pictocard.net): pick a photo, add a Mii, and send a PictoCard by email or as a letter to a Wii Message Board with WiiLink, from your console. They look and behave like the website, with the same fonts, colors, backgrounds, letterheads and live preview. All the clients live in this one repository so a change can be made to every console at once.
 

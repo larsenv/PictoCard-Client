@@ -79,7 +79,7 @@ def main():
     for l in items:
         if l['id'].startswith(MORE_PREFIX):
             l['group'] = MORE_GROUP
-    items.sort(key=lambda l: (l['group'] == MORE_GROUP, natural(l['group']), natural(l['name'])))
+    items.sort(key=lambda l: (l['group'] == MORE_GROUP, natural(l['group']), l.get('order', 0), natural(l['name'])))
     rows = (len(items) + COLS - 1) // COLS
     sheet = Image.new('RGB', (COLS * W, rows * H), (255, 255, 255))
     for i, l in enumerate(items):

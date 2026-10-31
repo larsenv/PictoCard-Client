@@ -52,8 +52,11 @@ void gfx_init(void)
     }
 
     for (int i = 0; i < 2; i++) {
-        xfb[i] = MEM_K0_TO_K1(SYS_AllocateFramebuffer(rmode));
+        /* cached: gfx_present writes whole lines and flushes them, which is far
+         * faster than single stores to uncached memory */
+        xfb[i] = SYS_AllocateFramebuffer(rmode);
         VIDEO_ClearFrameBuffer(rmode, xfb[i], COLOR_BLACK);
+        DCFlushRange(xfb[i], VIDEO_GetFrameBufferSize(rmode));
     }
     yoff = (rmode->xfbHeight - SH) / 2;
     if (yoff < 0) yoff = 0;
@@ -69,8 +72,9 @@ void gfx_init(void)
 
 int gfx_widescreen(void) { return wide; }
 GXRModeObj *gfx_rmode(void) { return rmode; }
-/* the frame buffer that was presented last, i.e. the one on screen */
-void *gfx_xfb_shown(void) { return xfb[which]; }
+/* the frame buffer that was presented last, i.e. the one on screen (uncached,
+ * since the keyboard's GX copies write it behind the CPU's back) */
+void *gfx_xfb_shown(void) { return MEM_K0_TO_K1(xfb[which]); }
 
 /* ── Cursor ──────────────────────────────────────────────────────────────── */
 /* The Wii pointer hand (Player 1) from PrimmR's Wii Pointer Cursors, https://primmr.dev/projects/wii-pointer-cursors/ */
@@ -164,8 +168,33 @@ void gfx_present(int cursor, int cx, int cy)
     u32 *out = xfb[which];
     int fbw = rmode->fbWidth;
     int pairs = fbw / 2;
+    /* Each frame buffer keeps the canvas it last showed: rows that have not
+     * changed since then are already right and are skipped. Most of the
+     * screen stays the same from frame to frame. */
+    static u32 *shown[2];
+    static int shown_tried;
+    if (!shown_tried) {
+        shown_tried = 1;
+        for (int i = 0; i < 2; i++) {
+            shown[i] = memalign(32, SW * SH * 4);
+            if (shown[i]) memset(shown[i], 0xFF, SW * SH * 4); /* canvas pixels never have the top byte set */
+        }
+        if (!shown[0] || !shown[1]) {
+            free(shown[0]);
+            free(shown[1]);
+            shown[0] = shown[1] = NULL;
+        }
+    }
+    u32 *last = shown[which];
+    int first_row = SH, last_row = -1;
     for (int y = 0; y < SH && y + yoff < rmode->xfbHeight; y++) {
         const u32 *row = canvas + y * SW;
+        if (last) {
+            if (!memcmp(row, last + y * SW, SW * 4)) continue;
+            memcpy(last + y * SW, row, SW * 4);
+        }
+        if (y < first_row) first_row = y;
+        last_row = y;
         u32 *dst = out + (y + yoff) * pairs;
         for (int x = 0; x < fbw; x += 2) {
             u32 c1, c2;
@@ -186,7 +215,8 @@ void gfx_present(int cursor, int cx, int cy)
             dst[x >> 1] = ((y1 >> 8) << 24) | ((cb >> 9) << 16) | ((y2 >> 8) << 8) | (cr >> 9);
         }
     }
-    DCFlushRange(out, rmode->fbWidth * rmode->xfbHeight * 2);
+    if (last_row >= first_row)
+        DCFlushRange(out + (yoff + first_row) * pairs, (u32)pairs * 4 * (last_row - first_row + 1));
     VIDEO_SetNextFramebuffer(out);
     VIDEO_Flush();
 
@@ -231,15 +261,6 @@ void gfx_noclip(void)
     }
 }
 
-u32 gfx_mix(u32 a, u32 b, int alpha)
-{
-    if (alpha <= 0) return a;
-    if (alpha >= 255) return b;
-    int ia = 255 - alpha;
-    return (((R(a) * ia + R(b) * alpha) / 255) << 16) | (((G(a) * ia + G(b) * alpha) / 255) << 8) |
-           ((B(a) * ia + B(b) * alpha) / 255);
-}
-
 static inline void plot(int x, int y, u32 color, int alpha)
 {
     if (x < clip_x0 || y < clip_y0 || x >= clip_x1 || y >= clip_y1 || alpha <= 0) return;
@@ -276,6 +297,24 @@ static int coverage(float dx, float dy, float r)
     return (int)(c * 255);
 }
 
+/* Corner coverage for each radius, worked out once: rounded boxes are drawn
+ * many times a frame and sqrtf is slow on the Wii. */
+#define CORNER_MAX 24
+static u8 corner_cov[CORNER_MAX + 1][CORNER_MAX * CORNER_MAX];
+static u8 corner_ready[CORNER_MAX + 1];
+
+static const u8 *corner(int r)
+{
+    if (r > CORNER_MAX) return NULL;
+    u8 *t = corner_cov[r];
+    if (!corner_ready[r]) {
+        for (int j = 0; j < r; j++)
+            for (int i = 0; i < r; i++) t[j * r + i] = coverage(r - (i + 0.5f), r - (j + 0.5f), r);
+        corner_ready[r] = 1;
+    }
+    return t;
+}
+
 void gfx_round(int x, int y, int w, int h, int r, u32 color)
 {
     if (w <= 0 || h <= 0) return;
@@ -286,12 +325,13 @@ void gfx_round(int x, int y, int w, int h, int r, u32 color)
         return;
     }
     gfx_fill(x, y + r, w, h - 2 * r, color);
+    const u8 *table = corner(r);
     for (int j = 0; j < r; j++) {
         float dy = r - (j + 0.5f);
         gfx_fill(x + r, y + j, w - 2 * r, 1, color);
         gfx_fill(x + r, y + h - 1 - j, w - 2 * r, 1, color);
         for (int i = 0; i < r; i++) {
-            int a = coverage(r - (i + 0.5f), dy, r);
+            int a = table ? table[j * r + i] : coverage(r - (i + 0.5f), dy, r);
             plot(x + i, y + j, color, a);
             plot(x + w - 1 - i, y + j, color, a);
             plot(x + i, y + h - 1 - j, color, a);
@@ -369,21 +409,31 @@ void image_free(image_t *img)
 void gfx_blit_alpha(const image_t *img, int x, int y, int alpha)
 {
     if (!img) return;
-    for (int j = 0; j < img->h; j++) {
-        int yy = y + j;
-        if (yy < clip_y0 || yy >= clip_y1) continue;
+    int i0 = clip_x0 - x > 0 ? clip_x0 - x : 0, i1 = clip_x1 - x < img->w ? clip_x1 - x : img->w;
+    int j0 = clip_y0 - y > 0 ? clip_y0 - y : 0, j1 = clip_y1 - y < img->h ? clip_y1 - y : img->h;
+    for (int j = j0; j < j1; j++) {
         const u32 *s = img->px + j * img->w;
-        for (int i = 0; i < img->w; i++) {
-            int xx = x + i;
-            if (xx < clip_x0 || xx >= clip_x1) continue;
+        u32 *d = canvas + (y + j) * SW + x;
+        for (int i = i0; i < i1; i++) {
             u32 c = s[i];
-            int a = ((c >> 24) * alpha) / 255;
-            if (a) canvas[yy * SW + xx] = a >= 255 ? (c & 0xFFFFFF) : gfx_mix(canvas[yy * SW + xx], c & 0xFFFFFF, a);
+            int a = c >> 24;
+            if (alpha < 255) a = (a * alpha + 255) >> 8;
+            if (a >= 255) d[i] = c & 0xFFFFFF;
+            else if (a) d[i] = gfx_mix(d[i], c & 0xFFFFFF, a);
         }
     }
 }
 
 void gfx_blit(const image_t *img, int x, int y) { gfx_blit_alpha(img, x, y, 255); }
+
+void gfx_blit_opaque(const image_t *img, int x, int y)
+{
+    if (!img) return;
+    int i0 = clip_x0 - x > 0 ? clip_x0 - x : 0, i1 = clip_x1 - x < img->w ? clip_x1 - x : img->w;
+    int j0 = clip_y0 - y > 0 ? clip_y0 - y : 0, j1 = clip_y1 - y < img->h ? clip_y1 - y : img->h;
+    if (i1 <= i0) return;
+    for (int j = j0; j < j1; j++) memcpy(canvas + (y + j) * SW + x + i0, img->px + j * img->w + i0, (i1 - i0) * 4);
+}
 
 void gfx_stretch(const image_t *img, int x, int y, int w, int h)
 {
@@ -392,12 +442,14 @@ void gfx_stretch(const image_t *img, int x, int y, int w, int h)
         int yy = y + j;
         if (yy < clip_y0 || yy >= clip_y1) continue;
         const u32 *s = img->px + (j * img->h / h) * img->w;
-        for (int i = 0; i < w; i++) {
+        u32 step = ((u32)img->w << 16) / w, sx = 0;
+        u32 *d = canvas + yy * SW;
+        for (int i = 0; i < w; i++, sx += step) {
             int xx = x + i;
             if (xx < clip_x0 || xx >= clip_x1) continue;
-            u32 c = s[i * img->w / w];
+            u32 c = s[sx >> 16];
             int a = c >> 24;
-            if (a) canvas[yy * SW + xx] = a == 255 ? (c & 0xFFFFFF) : gfx_mix(canvas[yy * SW + xx], c & 0xFFFFFF, a);
+            if (a) d[xx] = a == 255 ? (c & 0xFFFFFF) : gfx_mix(d[xx], c & 0xFFFFFF, a);
         }
     }
 }

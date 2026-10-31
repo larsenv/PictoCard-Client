@@ -225,9 +225,11 @@ void ui_wrapped(int font, int size, int x, int y, int w, u32 color, const char *
         text_draw_n(font, size, x, y + i * font_line_height(font, size), color, text + starts[i], lens[i]);
 }
 
+int ui_dim_done;
+
 void ui_dim(void)
 {
-    gfx_fill_alpha(0, 0, SW, SH, 0x05090c, 150);
+    if (!ui_dim_done) gfx_fill_alpha(0, 0, SW, SH, 0x05090c, 150);
 }
 
 void ui_radio(int x, int y, const char *text, int checked, int focused)

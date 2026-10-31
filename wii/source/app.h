@@ -61,7 +61,8 @@ void doodle_draw(int frame);
 
 /* mb.c — pictures from the Wii Message Board (NAND cdb.vff and SD card messages) */
 typedef void (*mb_cb)(const image_t *picture);
-void mb_open(mb_cb cb, void (*on_error)(const char *message));
+void mb_open(mb_cb cb, void (*on_error)(const char *message)); /* opens a gallery */
+void mb_update(void); /* once a frame: hands the gallery what the background reader found */
 
 /* picker.c — list picker and file browser */
 typedef struct {

@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <malloc.h>
 #include <gccore.h>
+#include <ogc/lwp_watchdog.h>
 #include <wiiupdate.h>
 #include "app.h"
 #include "api.h"
@@ -1844,6 +1846,50 @@ static void draw_update_popup(void)
     text_draw_center(FONT_REGULAR, 14, x, row + 8, w, T.muted, p->hint);
 }
 
+static void draw_screen(void)
+{
+    gfx_fill(0, 0, SW, SH, T.bg);
+    ui_header(settings.light);
+    switch (screen) {
+    case SCR_CONNECT: draw_connect(); break;
+    case SCR_COMPOSE: draw_compose(); break;
+    case SCR_REVIEW: draw_review(); break;
+    case SCR_VERIFY: draw_verify(); break;
+    case SCR_DONE: draw_done(); break;
+    }
+    if (alert_frames > 0) {
+        alert_frames--;
+        int w = SW > 700 ? 600 : 520, x = (SW - w) / 2;
+        int h = ui_alert_height(w, alert_text);
+        int y = SH - 44 - h;
+        gfx_round(x, y + 3, w, h, RADIUS, T.shadow);
+        gfx_fill(x, y, w, h, T.bg);
+        ui_alert(x, y, w, alert_text, alert_error);
+    }
+}
+
+/* The dimmed screen behind a modal, kept between frames. It is redrawn when
+ * anything it shows may have changed, and once a second regardless. Returns 1
+ * when the canvas now holds it. */
+static int draw_backdrop(int modal)
+{
+    static u32 *saved;
+    static int saved_key[6] = { -1 }, saved_frame;
+    int key[6] = { modal, screen, version, preview_version, api.busy, settings.light };
+    if (!saved) saved = memalign(32, SW * SH * 4);
+    if (!saved) return 0;
+    if (!memcmp(key, saved_key, sizeof key) && frame - saved_frame < 60) {
+        memcpy(canvas, saved, SW * SH * 4);
+        return 1;
+    }
+    draw_screen();
+    ui_dim();
+    memcpy(saved, canvas, SW * SH * 4);
+    memcpy(saved_key, key, sizeof key);
+    saved_frame = frame;
+    return 1;
+}
+
 void app_run(void)
 {
     SYS_SetResetCallback(reset_cb);
@@ -1896,6 +1942,7 @@ void app_run(void)
             in.down = in.held = 0;
         }
 
+        mb_update();
         if (osk_active()) osk_update(&in);
         else if (gallery_active()) gallery_update(&in);
         else if (picker_active()) picker_update(&in);
@@ -1950,30 +1997,23 @@ void app_run(void)
             continue;
         }
 
-        /* draw */
-        gfx_fill(0, 0, SW, SH, T.bg);
-        ui_header(settings.light);
-        switch (screen) {
-        case SCR_CONNECT: draw_connect(); break;
-        case SCR_COMPOSE: draw_compose(); break;
-        case SCR_REVIEW: draw_review(); break;
-        case SCR_VERIFY: draw_verify(); break;
-        case SCR_DONE: draw_done(); break;
+#ifdef AUTOTEST
+        u64 draw_start = gettime();
+#endif
+        /* draw. Under a modal the screen behind it is dimmed and still, so it is
+         * drawn once and copied back on the frames after that. */
+        int modal = modal_id();
+        if (!modal || busy_modal || alert_frames > 0 || !draw_backdrop(modal)) {
+            draw_screen();
+            if (modal) ui_dim();
         }
-        if (alert_frames > 0) {
-            alert_frames--;
-            int w = SW > 700 ? 600 : 520, x = (SW - w) / 2;
-            int h = ui_alert_height(w, alert_text);
-            int y = SH - 44 - h;
-            gfx_round(x, y + 3, w, h, RADIUS, T.shadow);
-            gfx_fill(x, y, w, h, T.bg);
-            ui_alert(x, y, w, alert_text, alert_error);
-        }
+        ui_dim_done = modal != 0;
         if (osk_active()) osk_draw(frame);
         else if (gallery_active()) gallery_draw(frame);
         else if (picker_active()) picker_draw(frame);
         else if (files_active()) files_draw(frame);
         else if (doodle_active()) doodle_draw(frame);
+        ui_dim_done = 0;
         if (busy_modal) draw_busy();
         if (update_open) draw_update_popup();
 
@@ -1983,8 +2023,20 @@ void app_run(void)
             if (autotest_quit) quit = 2; /* power off so Dolphin stops and syncs the SD folder */
         }
 #endif
+#ifdef AUTOTEST
+        u64 drawn = gettime();
+#endif
         VIDEO_WaitVSync();
+#ifdef AUTOTEST
+        u64 present_start = gettime();
+#endif
         gfx_present(in.pointer, in.px, in.py);
+#ifdef AUTOTEST
+        {
+            extern void autotest_frame_us(u32 us);
+            autotest_frame_us(diff_usec(draw_start, drawn) + diff_usec(present_start, gettime()));
+        }
+#endif
     }
     settings_save();
     if (quit == 2) SYS_ResetSystem(SYS_POWEROFF, 0, 0);

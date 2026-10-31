@@ -71,6 +71,6 @@ Drawing is done in software on an 852×480 canvas that the GPU (through SDL2) sc
 - Wii pointer cursor from [PrimmR's Wii Pointer Cursors](https://primmr.dev/projects/wii-pointer-cursors/)
 - Message Board reading (VFF and picture formats) from cdbackup and tiny-AES-c
 - Mii faces rendered by Arian Kordi's Mii renderer
-- Menu sound effects (`data/sfx_*.pcm`) from [RiftWii](https://github.com/KakarottoCake/Riftwii) (GPL-3.0-or-later), made by its `tools/make_sounds.py`
+- Menu sound effects (`data/sfx_*.pcm`) by Kakarotto, from [RiftWii](https://github.com/KakarottoCake/Riftwii) (GPL-3.0-or-later), made by its `tools/make_sounds.py`
 
 Licensed under the GNU GPL v3.

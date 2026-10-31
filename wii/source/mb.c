@@ -2,7 +2,17 @@
  * cdb.vff on the NAND (a small FAT image) and, for messages kept on an SD
  * card, as encrypted files under sd:/private/wii/title/HAEA. The layout and
  * the picture formats come from cdbackup (larsenv/cdbackup): attachments are
- * either Nintendo's "AJPG" (ODH) pictures or plain JPEGs. */
+ * either Nintendo's "AJPG" (ODH) pictures or plain JPEGs.
+ *
+ * Inside the VFF every message sits in a folder for the minute it was posted
+ * and the program that posted it:
+ *   /2019/08/23/14/05/HCFE_01/ODH/251B6E2C.000   (a Photo Channel picture)
+ *   /2019/08/21/22/03/HAEA_#1/LOG/25195AA9.000   (the daily play log)
+ * The file name is the time in seconds since 2000, in hex.
+ *
+ * The pictures are shown in a gallery. The NAND is slow, so looking for the
+ * messages and making the thumbnails happens on a background thread while
+ * the gallery is already on screen. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,8 +22,10 @@
 #include <sys/stat.h>
 #include <gccore.h>
 #include <ogc/isfs.h>
+#include <ogc/lwp.h>
 #include "app.h"
 #include "aes.h"
+#include "gallery.h"
 #include "gfx.h"
 #include "image.h"
 #include "libpatcher.h"
@@ -21,11 +33,15 @@
 
 #define NAND_VFF "/title/00000001/00000002/data/cdb.vff"
 #define SD_DIR "sd:/private/wii/title/HAEA"
-#define MAX_VFF_BYTES (24 * 1024 * 1024)
 #define MAX_ENTRIES 240
+#define MAX_DEPTH 10 /* the folders above go eight deep */
+#define MAX_MESSAGE (8 * 1024 * 1024)
 #define SECONDS_TO_2000 946684800ULL
 #define ATTR_SIZE 0x400    /* CDBAttrHeader, then the message itself (CDBFILE) */
 #define HEADER_READ (ATTR_SIZE + 0x144)
+#define ATT_FIELDS (ATTR_SIZE + 0x12C) /* attachment offset and size, relative to the CDBFILE */
+#define THUMB_W 120
+#define THUMB_H 88
 
 /* ── VFF (FAT12/16 image with a 0x20 byte header) ────────────────────────── */
 
@@ -144,10 +160,21 @@ typedef struct {
 
 static entry_t entries[MAX_ENTRIES];
 static int entry_count;
-static pick_item_t items[MAX_ENTRIES];
 static char error_text[160];
 static mb_cb deliver;
 static void (*report_error)(const char *);
+
+/* the gallery's view of the entries, newest first */
+static image_t *thumbs[MAX_ENTRIES];
+static char labels[MAX_ENTRIES][40];
+static const char *label_ptrs[MAX_ENTRIES];
+
+/* background thread: scans, then makes thumbnails */
+static lwp_t worker = LWP_THREAD_NULL;
+static volatile int stop_worker;
+static volatile int scan_done; /* entries[], labels[] and error_text are final */
+static volatile int want_first; /* the first thumbnail on screen, done first */
+static int shown;               /* the gallery has been given the entries */
 
 static int is_picture(const u8 *data)
 {
@@ -176,39 +203,37 @@ static const u8 *attachment(const u8 *msg, size_t len, u32 *size)
     return NULL;
 }
 
-/* Message Board photos have no names of their own, so entries are listed by date and time. */
-static void describe(entry_t *e)
+/* Message Board photos have no names of their own, so entries are labelled by date and time. */
+static void describe(int i)
 {
+    const entry_t *e = &entries[i];
     time_t t = (time_t)(SECONDS_TO_2000 + e->when);
     struct tm tm;
     gmtime_r(&t, &tm);
-    int i = (int)(e - entries);
-    snprintf(items[i].label, sizeof items[i].label, "%04d-%02d-%02d  %02d:%02d  Photo%s", tm.tm_year + 1900,
-             tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, e->sd ? "  (SD card)" : "");
+    snprintf(labels[i], sizeof labels[i], "%04d-%02d-%02d %02d:%02d%s", tm.tm_year + 1900, tm.tm_mon + 1,
+             tm.tm_mday, tm.tm_hour, tm.tm_min, e->sd ? " (SD)" : "");
+    label_ptrs[i] = labels[i];
 }
 
-static int add_entry(const entry_t *e, const u8 *msg)
+static void add_entry(const entry_t *e)
 {
-    if (entry_count >= MAX_ENTRIES) return 0;
-    entries[entry_count] = *e;
-    memset(&items[entry_count], 0, sizeof items[entry_count]);
-    items[entry_count].value = entry_count;
-    (void)msg;
-    describe(&entries[entry_count]);
-    entry_count++;
-    return 1;
+    if (entry_count < MAX_ENTRIES) entries[entry_count++] = *e;
 }
 
+/* "251B6E2C.000" -> 0x251B6E2C. d is the 11 bytes of a FAT short name
+ * (eight name characters, space padded, then the extension). */
 static int parse_name(const u8 *d, u32 *when)
 {
     if (memcmp(d + 8, "000", 3)) return 0;
     u32 v = 0;
-    for (int i = 0; i < 8; i++) {
+    int digits = 0;
+    for (int i = 0; i < 8 && d[i] != ' '; i++, digits++) {
         int c = d[i];
         int h = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
         if (h < 0) return 0;
         v = v << 4 | h;
     }
+    if (!digits) return 0;
     *when = v;
     return 1;
 }
@@ -219,45 +244,43 @@ static void scan_dir_chain(u32 cluster, int depth)
 {
     u32 guard = 0;
     u8 buf[512];
-    while (cluster && guard++ < (u32)fat_entries) {
+    while (cluster && guard++ < (u32)fat_entries && !stop_worker) {
         if (!read_cluster(cluster, buf, 0, 512)) return;
         scan_dir_entries(buf, 16, depth);
         cluster = fat_next(cluster);
     }
 }
 
+/* Only the attachment fields and the attachment's first bytes are read, so a
+ * message costs two small reads. */
+static void scan_file(const u8 *d)
+{
+    entry_t e;
+    memset(&e, 0, sizeof e);
+    u32 size = le32(d + 28);
+    if (!parse_name(d, &e.when) || size < HEADER_READ || size > MAX_MESSAGE) return;
+    e.first = le16(d + 26);
+    e.size = size;
+    u8 fields[8], magic[4];
+    if (vff_file_read(e.first, size, ATT_FIELDS, fields, 8) != 8) return;
+    u32 off = be32(fields), asz = be32(fields + 4);
+    if (!off || asz < 16 || (u64)ATTR_SIZE + off + asz > size) return;
+    if (vff_file_read(e.first, size, ATTR_SIZE + off, magic, 4) == 4 && is_picture(magic)) add_entry(&e);
+}
+
 static void scan_dir_entries(const u8 *base, int count, int depth)
 {
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < count && !stop_worker && entry_count < MAX_ENTRIES; i++) {
         const u8 *d = base + i * 32;
         if (!d[0]) return;
         if (d[0] == 0xE5 || d[0] == '.' || d[11] == 0x0F || (d[11] & 0x08)) continue;
-        u32 first = le16(d + 26), size = le32(d + 28);
         if (d[11] & 0x10) {
-            if (depth < 6) scan_dir_chain(first, depth + 1);
+            /* play logs ("LOG") and their siblings never carry pictures */
+            if (!memcmp(d, "LOG        ", 11)) continue;
+            if (depth < MAX_DEPTH) scan_dir_chain(le16(d + 26), depth + 1);
             continue;
         }
-        entry_t e;
-        memset(&e, 0, sizeof e);
-        if (!parse_name(d, &e.when) || size < HEADER_READ) continue;
-        e.first = first;
-        e.size = size;
-        u8 head[HEADER_READ];
-        if (vff_file_read(first, size, 0, head, HEADER_READ) != HEADER_READ) continue;
-        /* the picture lies beyond the header: look at its first bytes only */
-        u32 off = be32(head + ATTR_SIZE + 0x12C), asz = be32(head + ATTR_SIZE + 0x130);
-        u8 magic[4];
-        if (off && asz >= 16 && (u64)ATTR_SIZE + off + asz <= size &&
-            vff_file_read(first, size, ATTR_SIZE + off, magic, 4) == 4 && is_picture(magic)) {
-            add_entry(&e, head);
-        } else if (size >= 4096 && size <= 8 * 1024 * 1024) {
-            /* no usable attachment fields: search the whole message (pictures make it large) */
-            u8 *msg = malloc(size);
-            u32 asz2;
-            if (msg && vff_file_read(first, size, 0, msg, size) == size && attachment(msg, size, &asz2))
-                add_entry(&e, head);
-            free(msg);
-        }
+        scan_file(d);
     }
 }
 
@@ -311,7 +334,7 @@ static u8 *read_sd_message(const char *path, size_t *len)
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (size < HEADER_READ || size > 8 * 1024 * 1024) {
+    if (size < HEADER_READ || size > MAX_MESSAGE) {
         fclose(f);
         return NULL;
     }
@@ -336,39 +359,45 @@ static void scan_sd(const char *dir, int depth)
     DIR *dp = opendir(dir);
     if (!dp) return;
     struct dirent *de;
-    while ((de = readdir(dp)) && entry_count < MAX_ENTRIES) {
+    while ((de = readdir(dp)) && entry_count < MAX_ENTRIES && !stop_worker) {
         if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
         char path[160];
         snprintf(path, sizeof path, "%s/%s", dir, de->d_name);
         struct stat sb;
         if (stat(path, &sb) < 0) continue;
         if (S_ISDIR(sb.st_mode)) {
-            if (depth < 5) scan_sd(path, depth + 1);
-        } else if (strlen(de->d_name) == 12) {
-            entry_t e;
-            memset(&e, 0, sizeof e);
-            u8 name[12];
-            memcpy(name, de->d_name, 12);
-            for (int i = 0; i < 8; i++)
-                if (name[i] >= 'a' && name[i] <= 'f') name[i] -= 32;
-            if (!parse_name(name, &e.when)) continue;
-            e.sd = 1;
-            snprintf(e.path, sizeof e.path, "%s", path);
-            size_t len;
-            u8 *msg = read_sd_message(path, &len);
-            if (!msg) continue;
-            u32 asz;
-            const u8 *att = attachment(msg, len, &asz);
-            if (att && is_picture(att)) add_entry(&e, msg);
-            free(msg);
+            if (depth < MAX_DEPTH && strcasecmp(de->d_name, "LOG")) scan_sd(path, depth + 1);
+            continue;
         }
+        /* "251B6E2C.000" -> the 11 bytes of a FAT short name */
+        const char *dot = strchr(de->d_name, '.');
+        if (!dot || dot - de->d_name > 8 || strlen(dot) != 4) continue;
+        u8 name[11];
+        memset(name, ' ', sizeof name);
+        for (int i = 0; i < dot - de->d_name; i++) {
+            char c = de->d_name[i];
+            name[i] = c >= 'a' && c <= 'f' ? c - 32 : c;
+        }
+        memcpy(name + 8, dot + 1, 3);
+        entry_t e;
+        memset(&e, 0, sizeof e);
+        if (!parse_name(name, &e.when)) continue;
+        e.sd = 1;
+        snprintf(e.path, sizeof e.path, "%s", path);
+        size_t len;
+        u8 *msg = read_sd_message(path, &len);
+        if (!msg) continue;
+        u32 asz;
+        if (attachment(msg, len, &asz)) add_entry(&e);
+        free(msg);
     }
     closedir(dp);
 }
 
 /* ── Loading a picture ───────────────────────────────────────────────────── */
 
-static image_t *load_picture(int index)
+/* max_side: JPEGs are decoded at a reduced scale when they are bigger */
+static image_t *load_picture(int index, int max_side)
 {
     if (index < 0 || index >= entry_count) return NULL;
     entry_t *e = &entries[index];
@@ -376,7 +405,7 @@ static image_t *load_picture(int index)
     size_t len = 0;
     if (e->sd) {
         msg = read_sd_message(e->path, &len);
-    } else if (vff_fd >= 0 && e->size <= 8 * 1024 * 1024) {
+    } else if (vff_fd >= 0 && e->size <= MAX_MESSAGE) {
         msg = malloc(e->size);
         if (msg) {
             len = vff_file_read(e->first, e->size, 0, msg, e->size);
@@ -392,24 +421,87 @@ static image_t *load_picture(int index)
     const u8 *att = attachment(msg, len, &asz);
     if (att) {
         if (!memcmp(att, "AJPG", 4)) img = odh_decode(att, asz);
-        else img = image_decode(att, asz, 1600);
+        else img = image_decode(att, asz, max_side);
     }
     free(msg);
     return img;
 }
 
-static image_t *preview(int value)
+/* fill w x h with the middle of the picture, so every cell is the same size */
+static image_t *make_thumb(const image_t *src)
 {
-    image_t *img = load_picture(value);
-    if (!img) return NULL;
-    image_t *thumb = image_fit(img, 150, 120);
-    image_free(img);
-    return thumb;
+    int cw = src->w, ch = src->h;
+    if ((long)cw * THUMB_H > (long)ch * THUMB_W) cw = ch * THUMB_W / THUMB_H;
+    else ch = cw * THUMB_H / THUMB_W;
+    if (cw < 1 || ch < 1) return NULL;
+    image_t *crop = image_new(cw, ch);
+    if (!crop) return NULL;
+    int ox = (src->w - cw) / 2, oy = (src->h - ch) / 2;
+    for (int y = 0; y < ch; y++) memcpy(crop->px + y * cw, src->px + (oy + y) * src->w + ox, cw * 4);
+    image_t *t = image_resize(crop, THUMB_W, THUMB_H);
+    image_free(crop);
+    return t;
+}
+
+/* a grey card with a cross, for pictures that cannot be read */
+static image_t *broken_thumb(void)
+{
+    image_t *t = image_new(THUMB_W, THUMB_H);
+    if (!t) return NULL;
+    for (int i = 0; i < THUMB_W * THUMB_H; i++) t->px[i] = 0xFF8a949c;
+    for (int i = 0; i < 40; i++) {
+        int x = THUMB_W / 2 - 20 + i, y0 = THUMB_H / 2 - 20 + i, y1 = THUMB_H / 2 + 19 - i;
+        t->px[y0 * THUMB_W + x] = t->px[y1 * THUMB_W + x] = 0xFFFFFFFF;
+    }
+    return t;
+}
+
+static int newest_first(const void *a, const void *b)
+{
+    const entry_t *x = a, *y = b;
+    return x->when < y->when ? 1 : x->when > y->when ? -1 : 0;
+}
+
+static void *work(void *arg)
+{
+    (void)arg;
+    scan_nand();
+    scan_sd(SD_DIR, 0);
+    qsort(entries, entry_count, sizeof entries[0], newest_first);
+    for (int i = 0; i < entry_count; i++) describe(i);
+    scan_done = 1;
+
+    /* thumbnails: the ones on screen first, then the rest in order */
+    while (!stop_worker) {
+        int next = -1, start = want_first;
+        if (start < 0 || start >= entry_count) start = 0;
+        for (int n = 0; n < entry_count && next < 0; n++) {
+            int i = (start + n) % entry_count;
+            if (!thumbs[i]) next = i;
+        }
+        if (next < 0) break;
+        image_t *img = load_picture(next, THUMB_W * 2);
+        image_t *t = img ? make_thumb(img) : NULL;
+        image_free(img);
+        thumbs[next] = t ? t : broken_thumb();
+        if (!thumbs[next]) break; /* out of memory */
+    }
+    return NULL;
+}
+
+static void stop(void)
+{
+    if (worker != LWP_THREAD_NULL) {
+        stop_worker = 1;
+        LWP_JoinThread(worker, NULL);
+        worker = LWP_THREAD_NULL;
+    }
 }
 
 static void picked(int value)
 {
-    image_t *img = load_picture(value);
+    stop();
+    image_t *img = load_picture(value, 1600);
     if (!img) {
         if (report_error) report_error("That Message Board picture could not be read.");
         return;
@@ -420,32 +512,53 @@ static void picked(int value)
 
 static void closed(void)
 {
+    stop();
     vff_free();
-}
-
-static int newest_first(const void *a, const void *b)
-{
-    const pick_item_t *x = a, *y = b;
-    u32 wa = entries[x->value].when, wb = entries[y->value].when;
-    return wa < wb ? 1 : wa > wb ? -1 : 0;
+    for (int i = 0; i < MAX_ENTRIES; i++) {
+        image_free(thumbs[i]);
+        thumbs[i] = NULL;
+    }
+    entry_count = 0;
 }
 
 void mb_open(mb_cb cb, void (*on_error)(const char *))
 {
+    stop();
+    closed();
     deliver = cb;
     report_error = on_error;
-    entry_count = 0;
     error_text[0] = 0;
-    vff_free();
-    scan_nand();
-    scan_sd(SD_DIR, 0);
-    if (!entry_count) {
-        vff_free();
-        if (on_error)
-            on_error(error_text[0] ? error_text : "No pictures were found on the Wii Message Board.");
-        return;
+    stop_worker = 0;
+    scan_done = 0;
+    want_first = 0;
+    shown = 0;
+    gallery_open("Pictures on the Wii Message Board", NULL, thumbs, label_ptrs, NULL, 0, 0, picked);
+    gallery_set_status("Looking for pictures...");
+    gallery_on_close(closed);
+    /* below the main loop's priority, so the gallery keeps drawing smoothly */
+    if (LWP_CreateThread(&worker, work, NULL, NULL, 64 * 1024, 30) < 0) {
+        worker = LWP_THREAD_NULL;
+        gallery_close();
+        if (on_error) on_error("Could not start reading the Message Board.");
     }
-    qsort(items, entry_count, sizeof items[0], newest_first);
-    picker_open_preview("Pictures on the Wii Message Board", items, entry_count, items[0].value, picked, preview,
-                        closed);
+}
+
+void mb_update(void)
+{
+    if (worker == LWP_THREAD_NULL || !gallery_active()) return;
+    if (!scan_done) return;
+    if (!shown) {
+        shown = 1;
+        if (!entry_count) {
+            char text[sizeof error_text];
+            snprintf(text, sizeof text, "%s", error_text[0] ? error_text : "No pictures were found on the Wii Message Board.");
+            gallery_close();
+            if (report_error) report_error(text);
+            return;
+        }
+        gallery_set_count(entry_count);
+    }
+    int first, last;
+    gallery_visible(&first, &last);
+    want_first = first;
 }

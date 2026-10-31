@@ -32,4 +32,6 @@ void ui_spinner(int cx, int cy, int r, u32 color, int frame);
 void ui_wrapped(int font, int size, int x, int y, int w, u32 color, const char *text, int max_lines);
 int ui_wrapped_height(int font, int size, int w, const char *text, int max_lines);
 void ui_dim(void);
+/* set while the main loop has already drawn the dimmed backdrop itself: ui_dim() then does nothing */
+extern int ui_dim_done;
 void ui_radio(int x, int y, const char *text, int checked, int focused);

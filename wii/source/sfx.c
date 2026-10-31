@@ -1,3 +1,4 @@
+/* Menu sound effects by Kakarotto, from RiftWii (https://github.com/KakarottoCake/Riftwii). */
 #include <malloc.h>
 #include <string.h>
 #include <gccore.h>

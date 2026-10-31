@@ -51,6 +51,29 @@ static void save_shot(const char *name)
     fclose(f);
 }
 
+/* frame times (drawing and presenting), reported by "perf <label>" to sd:/perf.txt */
+static u64 perf_sum;
+static u32 perf_frames, perf_max;
+
+void autotest_frame_us(u32 us)
+{
+    perf_sum += us;
+    perf_frames++;
+    if (us > perf_max) perf_max = us;
+}
+
+static void perf_report(const char *label)
+{
+    FILE *f = fopen("sd:/perf.txt", "a");
+    if (f) {
+        fprintf(f, "%s: %u frames, avg %u us, max %u us\n", label, (unsigned)perf_frames,
+                perf_frames ? (unsigned)(perf_sum / perf_frames) : 0, (unsigned)perf_max);
+        fclose(f);
+    }
+    perf_sum = 0;
+    perf_frames = perf_max = 0;
+}
+
 static int pending_shot;
 static char shot_name[64];
 
@@ -118,6 +141,8 @@ void autotest_apply(input_t *in)
             pending_shot = 1;
             wait_frames = 2;
             break;
+        } else if (!strncmp(line, "perf ", 5)) {
+            perf_report(line + 5);
         } else if (!strcmp(line, "quit")) {
             autotest_quit = 1;
             break;

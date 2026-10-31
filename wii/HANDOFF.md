@@ -3,7 +3,7 @@
 Working notes for whoever picks this up next. Keep this file current: update the
 **Status** and **Next steps** sections whenever work lands, and move finished items down to **Done**.
 
-Last updated: 2026-10-14 (end of session) (end of session 1)
+Last updated: 2026-10-31
 
 Repos (both owned by `larsenv`, commit and push as `larsenv`):
 
@@ -24,7 +24,8 @@ Repos (both owned by `larsenv`, commit and push as `larsenv`):
 | Mii faces in the Mii picker (Arian Kordi's renderer) | Server: `POST /api/v1/mii-faces` (`routes/api.js`). Wii: `JOB_FACES` in `api.c`, `request_faces()` in `app.c`, icons in `picker.c`. Web: `public/js/wii-mii-face.js` (Wii tab Mii file) | Dolphin screenshot with real Miis from RFL_DB.dat; Playwright |
 | Picture-only Wii mail (Wii app/API only, never the website) | `lib/wiiMail.js` (`pictureOnly`), `routes/api.js` `sendWii`, `app.c` `validate()` | `tests/api.cjs` |
 | Site tweaks | "New" badge removed; Wii page: thicker image borders, "The Wii app, not the website" captions, title case | Visual |
-| Message Board pictures: list, preview, VFF reader | `source/mb.c`, `source/odh.cpp` (AJPG decoder from cdbackup), `source/aes.c`, `source/libpatcher.c` | Dolphin with a crafted `cdb.vff` (list, dates, newest first, JPEG preview). The AJPG/ODH path is **not** tested yet |
+| Message Board pictures: gallery, VFF reader | `source/mb.c`, `source/gallery.c`, `source/odh.cpp` (AJPG decoder from cdbackup), `source/aes.c`, `source/libpatcher.c` | Real `cdb.vff` files: host build of `mb.c` (all 12 Photo Channel pictures found, none in a VFF with only play logs, ASan clean) and Dolphin (AJPG thumbnails decode, scrolling, picking puts the photo on the card). Messages sit eight folders deep (`/YYYY/MM/DD/hh/mm/<title>/<kind>/<hex time>.000`, photos under `HCFE_01/ODH`); the old reader stopped at six and found nothing. Scanning and thumbnails run on a low-priority thread; `LOG` folders are skipped |
+| Rendering speed | `gfx.c` (`gfx_present` converts only rows that changed since that frame buffer was last shown, writes through the cache, no divisions in `gfx_mix`, cached corner coverage), `app.c` (`draw_backdrop`: the dimmed screen behind a modal is kept between frames) | Dolphin, AUTOTEST `perf` command: list modal 66-90 ms per frame before, 8 ms after; Message Board gallery about 11 ms |
 
 ### In progress
 
@@ -68,7 +69,7 @@ send-box posts locally. Open items:
    has no friends, so the entry layout (nicknames, Mii data) could not be checked. The `wii_development_package`
    (`/Volumes/SSD/larsen/Downloads/wii_development_package`) has only a stub `NWC24Mini.h`; there is no documentation of the file in it.
    Needs a real `nwc24fl.bin` from a console to confirm offsets. Friend codes read this way must still pass `wiino_valid()`.
-3. Verify the ODH (AJPG) decoder end to end: compile `source/odh.cpp` on the host with a small shim, use its own compressor to make
+3. (AJPG decoding now verified in Dolphin with real Photo Channel posts.) Verify the ODH (AJPG) decoder end to end: compile `source/odh.cpp` on the host with a small shim, use its own compressor to make
    an AJPG, decode with `odh_decode()`, compare. Also verify SD card messages (`sd:/private/wii/title/HAEA`, AES-CBC, zero key).
 4. (Done) README credits.
 5. Website: the Wii app page screenshots (`public/images/wii-app/*.png`) predate the doodle, Mii picker and Message Board
@@ -77,6 +78,9 @@ send-box posts locally. Open items:
    Opening Message Board pictures froze a real Wii: `scan_nand()` reloaded IOS (`patch_ahbprot_reset`) with WPAD, network and USB
    running. It now patches ISFS permissions in the running IOS (`patch_isfs_permissions_in_place`) and only with AHB access
    (`ahbprot_disabled()`); without it the picker shows an error. Needs a retest on hardware.
+7. Dolphin harness notes: with Dolphin 2609-7 the power-off after an AUTOTEST `quit` hangs, so the SD folder is never synced back.
+   Stop Dolphin with SIGTERM instead (it syncs `Load/WiiSDSync` on the way out) and delete `Load/WiiSD.raw` before each run.
+   The `perf <label>` script command appends average and worst frame times to `sd:/perf.txt`.
 
 ## How to build and test
 

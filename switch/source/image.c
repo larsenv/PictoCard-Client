@@ -18,7 +18,7 @@ static image_t *decode_jpeg(const unsigned char *data, size_t size, int max_side
             sf.denom *= 2;
         int sw = TJSCALED(w, sf), sh = TJSCALED(h, sf);
         img = image_new(sw, sh);
-        if (img && tjDecompress2(tj, data, size, (unsigned char *)img->px, sw, sw * 4, sh, TJPF_ARGB, 0) < 0 &&
+        if (img && tjDecompress2(tj, data, size, (unsigned char *)img->px, sw, sw * 4, sh, TJPF_BGRA, 0) < 0 &&
             tjGetErrorCode(tj) == TJERR_FATAL) {
             image_free(img);
             img = NULL;
@@ -34,7 +34,7 @@ static image_t *decode_png(const unsigned char *data, size_t size)
     memset(&png, 0, sizeof(png));
     png.version = PNG_IMAGE_VERSION;
     if (!png_image_begin_read_from_memory(&png, data, size)) return NULL;
-    png.format = PNG_FORMAT_ARGB;
+    png.format = PNG_FORMAT_BGRA; /* bytes B,G,R,A = a little-endian 0xAARRGGBB word */
     if ((size_t)png.width * png.height > 24u * 1000 * 1000) {
         png_image_free(&png);
         return NULL;
@@ -54,7 +54,7 @@ static image_t *decode_png(const unsigned char *data, size_t size)
 static image_t *decode_webp(const unsigned char *data, size_t size)
 {
     int w, h;
-    uint8_t *argb = WebPDecodeARGB(data, size, &w, &h);
+    uint8_t *argb = WebPDecodeBGRA(data, size, &w, &h); /* little-endian 0xAARRGGBB words */
     if (!argb) return NULL;
     image_t *img = image_new(w, h);
     if (img) memcpy(img->px, argb, (size_t)w * h * 4);
@@ -289,7 +289,7 @@ unsigned char *image_encode_jpeg(const image_t *img, int quality, size_t *out_si
     unsigned char *jpeg = NULL;
     unsigned long size = 0;
     if (tj) {
-        if (tjCompress2(tj, (unsigned char *)flat, img->w, img->w * 4, img->h, TJPF_ARGB, &jpeg, &size, TJSAMP_420,
+        if (tjCompress2(tj, (unsigned char *)flat, img->w, img->w * 4, img->h, TJPF_BGRA, &jpeg, &size, TJSAMP_420,
                         quality, 0) < 0) {
             tjFree(jpeg);
             jpeg = NULL;

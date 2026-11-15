@@ -174,6 +174,51 @@ static int conn_read(conn_t *c, void *buf, size_t len)
     }
 }
 
+/* ── TLS session reuse ───────────────────────────────────────────────────── */
+/* Every request opens a new connection. The session of the last one is kept and
+ * offered on the next connection to the same server: with the server's session
+ * ticket the handshake skips the key exchange and the certificate checks, which
+ * is most of what a request costs here. A server that no longer knows the
+ * session simply does a full handshake. */
+static mbedtls_ssl_session kept_session;
+static int kept_session_valid, kept_session_port;
+static char kept_session_host[128];
+
+static void session_forget(void)
+{
+    LightLock_Lock(&tls_lock);
+    if (kept_session_valid) mbedtls_ssl_session_free(&kept_session);
+    kept_session_valid = 0;
+    LightLock_Unlock(&tls_lock);
+}
+
+/* Offer the kept session for this server; returns 1 when one was offered. */
+static int session_offer(mbedtls_ssl_context *ssl, const char *host, int port)
+{
+    LightLock_Lock(&tls_lock);
+    int offered = kept_session_valid && kept_session_port == port && !strcmp(kept_session_host, host) &&
+                  mbedtls_ssl_set_session(ssl, &kept_session) == 0;
+    LightLock_Unlock(&tls_lock);
+    return offered;
+}
+
+/* Keep the session of a finished handshake for the next connection. */
+static void session_keep(mbedtls_ssl_context *ssl, const char *host, int port)
+{
+    if (strlen(host) >= sizeof kept_session_host) return;
+    LightLock_Lock(&tls_lock);
+    if (kept_session_valid) mbedtls_ssl_session_free(&kept_session);
+    mbedtls_ssl_session_init(&kept_session);
+    kept_session_valid = mbedtls_ssl_get_session(ssl, &kept_session) == 0;
+    if (kept_session_valid) {
+        snprintf(kept_session_host, sizeof kept_session_host, "%s", host);
+        kept_session_port = port;
+    } else {
+        mbedtls_ssl_session_free(&kept_session);
+    }
+    LightLock_Unlock(&tls_lock);
+}
+
 /* ── HTTP ────────────────────────────────────────────────────────────────── */
 
 static int parse_url(const char *url, int *tls, char *host, size_t host_len, int *port, const char **path)
@@ -209,7 +254,7 @@ static int dechunk(char *body, size_t len, size_t *out_len)
         size_t size = strtoul(body + r, NULL, 16);
         r = line_end - body + 2;
         if (size == 0) break;
-        if (r + size > len) return -1;
+        if (size > len - r) return -1; /* compared this way round so a huge chunk size cannot wrap */
         memmove(body + w, body + r, size);
         w += size;
         r += size + 2;
@@ -279,14 +324,18 @@ int http_request(const char *method, const char *url, const char *content_type, 
             goto done;
         }
         mbedtls_ssl_set_bio(&c.ssl, (void *)(intptr_t)c.fd, sock_send, sock_recv, NULL);
+        int offered = session_offer(&c.ssl, host, port);
         while ((ret = mbedtls_ssl_handshake(&c.ssl)) != 0) {
             if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) continue;
+            /* never offer a session again after a handshake with it failed: the retry starts clean */
+            if (offered) session_forget();
             if (ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED)
                 fail(res, "The server's certificate could not be verified.", 0);
             else
                 fail(res, "The secure connection failed.", ret);
             goto done;
         }
+        session_keep(&c.ssl, host, port);
     }
 
     char head[640];
@@ -294,6 +343,11 @@ int http_request(const char *method, const char *url, const char *content_type, 
                      "%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: PictoCard3DS/" APP_VERSION
                      "\r\nAccept: application/json\r\nConnection: close\r\n",
                      method, path, host);
+    /* snprintf reports the length it wanted, so check before writing after it */
+    if (n < 0 || n >= (int)sizeof head - 96) {
+        fail(res, "The server address is too long.", 0);
+        goto done;
+    }
     if (body) n += snprintf(head + n, sizeof head - n, "Content-Type: %s\r\nContent-Length: %u\r\n",
                             content_type ? content_type : "application/json", (unsigned)body_len);
     n += snprintf(head + n, sizeof head - n, "\r\n");

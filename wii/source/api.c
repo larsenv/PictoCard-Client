@@ -259,6 +259,10 @@ static int do_verify(const char *ticket, const char *code)
     cJSON_AddStringToObject(req, "code", code);
     char *body = cJSON_PrintUnformatted(req);
     cJSON_Delete(req);
+    if (!body) {
+        set_error("The Wii ran out of memory.");
+        return 0;
+    }
     cJSON *json = call("POST", "verify", body, strlen(body), NULL);
     free(body);
     if (!json) return 0;

@@ -3,7 +3,7 @@
 Working notes for whoever picks this up next. Keep this file current: update the
 **Status** and **Next steps** sections whenever work lands, and move finished items down to **Done**.
 
-Last updated: 2026-10-31
+Last updated: 2026-11-15
 
 Repos (both owned by `larsenv`, commit and push as `larsenv`):
 
@@ -26,6 +26,9 @@ Repos (both owned by `larsenv`, commit and push as `larsenv`):
 | Site tweaks | "New" badge removed; Wii page: thicker image borders, "The Wii app, not the website" captions, title case | Visual |
 | Message Board pictures: gallery, VFF reader | `source/mb.c`, `source/gallery.c`, `source/odh.cpp` (AJPG decoder from cdbackup), `source/aes.c`, `source/libpatcher.c` | Real `cdb.vff` files: host build of `mb.c` (all 12 Photo Channel pictures found, none in a VFF with only play logs, ASan clean) and Dolphin (AJPG thumbnails decode, scrolling, picking puts the photo on the card). Messages sit eight folders deep (`/YYYY/MM/DD/hh/mm/<title>/<kind>/<hex time>.000`, photos under `HCFE_01/ODH`); the old reader stopped at six and found nothing. Scanning and thumbnails run on a low-priority thread; `LOG` folders are skipped |
 | Rendering speed | `gfx.c` (`gfx_present` converts only rows that changed since that frame buffer was last shown, writes through the cache, no divisions in `gfx_mix`, cached corner coverage), `app.c` (`draw_backdrop`: the dimmed screen behind a modal is kept between frames) | Dolphin, AUTOTEST `perf` command: list modal 66-90 ms per frame before, 8 ms after; Message Board gallery about 11 ms |
+| TLS session reuse (all four consoles) | `source/net.c` (`session_offer`, `session_keep`, `session_forget`), `config/mbedtls_*.h` (`MBEDTLS_SSL_SESSION_TICKETS`) | Host build of mbedTLS 3.6.7 with the Wii configuration against pictocard.net: the second and third connections resume (64 ms handshake down to 11 ms on the host). Without tickets the server does not resume. Not timed on hardware. A handshake that fails with an offered session forgets it, so the retry in `api.c` is a full handshake |
+| Exit asks first, queued buttons, request race (1.3.9) | `app.c`: `card_in_progress`, `exit_prompt`, `queue_action`/`queued_action`, `api_waiting` | Dolphin AUTOTEST: the prompt shows, expires, shows again, and a second HOME exits. `api_waiting()` (busy or a result not collected yet) replaces `api.busy` wherever a request is started: starting one while `api.finished` was still set dropped the finished preview. The 3DS has the queue and the race fix but keeps START+SELECT to exit |
+| Chunked-body bounds, request head, version compare, email check | `net.c` `dechunk`, `http_request`; `app.c` `version_newer`, `valid_email`; `pow.c` (difficulty over 30 is refused) | Host test with ASan/UBSan of the functions as they are in the tree (version order, address shapes, oversized and cut-off chunks) |
 
 ### In progress
 

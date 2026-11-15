@@ -60,6 +60,8 @@ int pow_solve(const char *challenge, int bits, char *nonce_out, volatile int *pr
 {
     static const u32 IV[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                                0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+    /* More bits than the search below can reach would only spin for hours with no way out. */
+    if (bits < 0 || bits > 30) return -1;
     char prefix[512];
     int plen = snprintf(prefix, sizeof prefix, "%s:", challenge);
     if (plen <= 0 || plen >= (int)sizeof prefix - 64) return -1;

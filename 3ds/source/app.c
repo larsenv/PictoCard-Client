@@ -124,6 +124,7 @@ static int pending_review;
 
 static char verify_ticket[64], verify_email[128], verify_code[16];
 static int busy_modal;
+static int queued_action; /* a button pressed while another request was running; done when that finishes */
 static int done_wii;
 static char working_text[96]; /* a slow step on this thread (encoding a picture): drawn before it runs */
 static void (*working_fn)(void);
@@ -154,6 +155,44 @@ static void show_alert(const char *msg, int error)
     snprintf(alert_text, sizeof alert_text, "%s", msg);
     alert_error = error;
     alert_frames = 60 * 8;
+}
+
+/* Requests to the server run one at a time, and the live preview, Mii faces and letterhead
+ * pictures load in the background. True while one is running or its result is still to be
+ * collected (starting another then would overwrite that result). */
+static int api_waiting(void) { return api.busy || api.finished; }
+
+/* A button that needs the server while it is busy waits its turn behind the progress dialog,
+ * where it used to do nothing at all. */
+static void queue_action(int id)
+{
+    queued_action = id;
+    busy_modal = 1;
+}
+
+/* Dotted version numbers compared part by part, so 1.10.0 is newer than 1.9.2. */
+static int version_newer(const char *a, const char *b)
+{
+    while (*a || *b) {
+        char *ea, *eb;
+        long x = strtol(a, &ea, 10), y = strtol(b, &eb, 10);
+        if (x != y) return x > y;
+        if (*ea != '.' && *eb != '.') return 0;
+        a = *ea == '.' ? ea + 1 : ea;
+        b = *eb == '.' ? eb + 1 : eb;
+    }
+    return 0;
+}
+
+/* The shape the server accepts: name@domain.tld, with one @ and no spaces. Checked here so a
+ * typo is caught at once instead of after the anti-spam check and the upload. */
+static int valid_email(const char *s)
+{
+    const char *at = strchr(s, '@');
+    if (!at || at == s || strchr(at + 1, '@') || strpbrk(s, " \t\r\n")) return 0;
+    for (const char *p = at + 2; at[1] && *p; p++)
+        if (*p == '.' && p[1]) return 1;
+    return 0;
 }
 
 static void draft_changed(void)
@@ -1096,9 +1135,9 @@ static const char *validate(void)
 {
     static char msg[160];
     if (draft.method == 0) {
-        if (!strchr(draft.recipient_email, '@')) return "Please enter a valid recipient email address.";
+        if (!valid_email(draft.recipient_email)) return "Please enter a valid recipient email address.";
         if (!draft.sender_name[0]) return "Your name is required.";
-        if (!strchr(draft.sender_email, '@')) return "A valid sender email is required for verification.";
+        if (!valid_email(draft.sender_email)) return "A valid sender email is required for verification.";
         if (!draft.picture_jpeg) return draft.doodle ? "Please draw a doodle for your card." : "Please choose a picture for your card.";
     } else {
         if (!meta.wii_enabled) return "Wii delivery isn't set up yet. Please check back soon.";
@@ -1142,7 +1181,7 @@ static void go_review(void)
     if (preview_version != version) {
         pending_review = 1;
         busy_modal = 1;
-        if (!api.busy) request_preview();
+        if (!api_waiting()) request_preview();
         return;
     }
     letter_page = 0;
@@ -1158,12 +1197,17 @@ static void start_send(void)
         show_alert(err, 1);
         return;
     }
+    if (api_waiting()) {
+        queue_action(F_SEND);
+        return;
+    }
     char *body = draft_json(1);
     if (!body) {
         show_alert("The 3DS ran out of memory.", 1);
         return;
     }
     if (api_send(body)) busy_modal = 1;
+    else show_alert("Could not start sending. Please try again.", 1);
 }
 
 static void send_friend_request(void)
@@ -1177,7 +1221,8 @@ static void send_friend_request(void)
         return;
     }
     remember_sender();
-    if (api_friend(draft.recipient_wii)) busy_modal = 1;
+    if (api_waiting()) queue_action(F_FRIEND);
+    else if (api_friend(draft.recipient_wii)) busy_modal = 1;
 }
 
 static void reset_draft(void)
@@ -1212,6 +1257,7 @@ static void activate(int id)
     case F_EDIT: screen = SCR_COMPOSE; focus_id = F_REVIEW; break;
     case F_VERIFY_SEND:
         if (strlen(verify_code) != 6) show_alert("Enter the 6-digit code from the email.", 1);
+        else if (api_waiting()) queue_action(F_VERIFY_SEND);
         else if (api_verify(verify_ticket, verify_code)) busy_modal = 1;
         break;
     case F_VERIFY_BACK: screen = SCR_REVIEW; focus_id = F_SEND; break;
@@ -1425,8 +1471,8 @@ static void handle_finished(void)
                 if (!strcmp(meta.fonts[i].id, "rodinntlg")) draft.font = i;
             for (int i = 0; i < meta.expression_count; i++)
                 if (!strcmp(meta.expressions[i].id, "normal")) draft.expression = i;
-            if (strcmp(meta.min_client, APP_VERSION) > 0)
-                show_alert("A newer PictoCard for 3DS is available. Download it from pictocard.net.", 1);
+            if (version_newer(meta.min_client, APP_VERSION))
+                show_alert("A newer PictoCard for 3DS is available. Download it from pictocard.net/app.", 1);
             draft_changed();
         }
         return;
@@ -1593,7 +1639,7 @@ static void draw_busy(void)
     float x = 20, y = 70, w = BOT_W - 40, h = 100;
     rect(x, y, w, h, rgb(T->panel));
     frame_rect(x, y, w, h, 1, rgb(T->line));
-    const char *title = api.job == JOB_FRIEND ? "Sending a friend request"
+    const char *title = (queued_action ? queued_action == F_FRIEND : api.job == JOB_FRIEND) ? "Sending a friend request"
                       : pending_review        ? "Getting your card ready"
                       : api.job == JOB_VERIFY ? "Sending your card"
                                               : "Sending your card";
@@ -1607,13 +1653,15 @@ static void draw_busy(void)
         case STAGE_UPLOADING: stage = pending_review ? "Drawing your card..." : "Uploading your card..."; break;
         case STAGE_WAITING: stage = "Waiting for PictoCard..."; break;
         }
+    /* waiting for the live preview to finish before this request starts */
+    if (queued_action && !working_fn) stage = "One moment...";
     text_fit(x + 12, y + 36, 13, rgb(T->muted), C2D_AlignLeft, w - 24, stage);
     /* spinner dots */
     for (int i = 0; i < 8; i++) {
         int on = (frame / 6) % 8 == i;
         rect(x + 12 + i * 12, y + 60, 8, 8, rgb(on ? T->accent : T->elev));
     }
-    if (!working_fn && (api.stage == STAGE_SOLVING || api.stage == STAGE_UPLOADING)) {
+    if (!working_fn && !queued_action && (api.stage == STAGE_SOLVING || api.stage == STAGE_UPLOADING)) {
         rect(x + 12, y + 80, w - 24, 8, rgb(T->elev));
         rect(x + 12, y + 80, (w - 24) * api.progress / 100, 8, rgb(T->accent));
     }
@@ -1646,6 +1694,12 @@ static const char *screen_title(void)
 static void update(const input_t *in)
 {
     if (api.finished) handle_finished();
+    if (queued_action && !api_waiting()) {
+        int id = queued_action;
+        queued_action = 0;
+        busy_modal = 0;
+        activate(id);
+    }
 
     if (working_fn) return; /* runs after this frame is drawn */
 
@@ -1725,7 +1779,9 @@ static void update(const input_t *in)
 static void live_preview(void)
 {
     /* redraw the card a moment after the last change, as the website does */
-    if (screen != SCR_COMPOSE || !meta.loaded || api.busy || doodle_active() || camera_active()) return;
+    /* api_waiting, not just busy: a result that arrived during this frame is collected at the
+     * top of the next one, and starting another request first would overwrite it */
+    if (screen != SCR_COMPOSE || !meta.loaded || api_waiting() || doodle_active() || camera_active()) return;
     if (preview_version == version || frame - changed_frame < 45) return;
     request_preview();
 }

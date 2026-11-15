@@ -28,6 +28,9 @@
 #define MBEDTLS_SSL_SERVER_NAME_INDICATION
 #define MBEDTLS_SSL_PROTO_TLS1_2
 #define MBEDTLS_SSL_MAX_FRAGMENT_LENGTH
+/* Session tickets: the next connection resumes the last session instead of doing a
+ * full handshake (see "TLS session reuse" in source/net.c). */
+#define MBEDTLS_SSL_SESSION_TICKETS
 
 #define MBEDTLS_AES_C
 #define MBEDTLS_ASN1_PARSE_C

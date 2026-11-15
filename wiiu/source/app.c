@@ -65,6 +65,9 @@ static int quit;
 
 static char alert_text[256];
 static int alert_error, alert_frames;
+static int exit_prompt;   /* the alert on screen asks to press the exit button again */
+static int queued_action; /* a button pressed while another request was running; done when that finishes */
+static int busy_modal;    /* show a progress dialog for the running job */
 
 static int version, preview_version = -1, requested_version = -1, changed_frame;
 static image_t *preview_card, *preview_letter[8];
@@ -76,7 +79,6 @@ static int review_page, review_show_card;
 static int pending_review; /* waiting for a fresh preview before reviewing */
 
 static char verify_ticket[64], verify_email[128], verify_code[16];
-static int busy_modal; /* show a progress dialog for the running job */
 static int done_wii;
 static pick_item_t pick_items[512];
 
@@ -92,6 +94,45 @@ static void show_alert(const char *msg, int error)
     snprintf(alert_text, sizeof alert_text, "%s", msg);
     alert_error = error;
     alert_frames = 60 * 8;
+    exit_prompt = 0;
+}
+
+/* Requests to the server run one at a time, and the live preview, Mii faces and letterhead
+ * pictures load in the background. True while one is running or its result is still to be
+ * collected (starting another then would overwrite that result). */
+static int api_waiting(void) { return api.busy || api.finished; }
+
+/* A button that needs the server while it is busy waits its turn behind the progress dialog,
+ * where it used to do nothing at all. */
+static void queue_action(int id)
+{
+    queued_action = id;
+    busy_modal = 1;
+}
+
+/* Dotted version numbers compared part by part, so 1.10.0 is newer than 1.9.2. */
+static int version_newer(const char *a, const char *b)
+{
+    while (*a || *b) {
+        char *ea, *eb;
+        long x = strtol(a, &ea, 10), y = strtol(b, &eb, 10);
+        if (x != y) return x > y;
+        if (*ea != '.' && *eb != '.') return 0;
+        a = *ea == '.' ? ea + 1 : ea;
+        b = *eb == '.' ? eb + 1 : eb;
+    }
+    return 0;
+}
+
+/* The shape the server accepts: name@domain.tld, with one @ and no spaces. Checked here so a
+ * typo is caught at once instead of after the anti-spam check and the upload. */
+static int valid_email(const char *s)
+{
+    const char *at = strchr(s, '@');
+    if (!at || at == s || strchr(at + 1, '@') || strpbrk(s, " \t\r\n")) return 0;
+    for (const char *p = at + 2; at[1] && *p; p++)
+        if (*p == '.' && p[1]) return 1;
+    return 0;
 }
 
 void draft_changed(void)
@@ -779,7 +820,7 @@ static void letterhead_picked(int value)
 
 static void request_preview(void)
 {
-    if (api.busy || !meta.loaded) return;
+    if (api_waiting() || !meta.loaded) return;
     char *body = draft_json(0);
     if (body && api_preview(body)) requested_version = version;
 }
@@ -791,9 +832,9 @@ static const char *validate_for(int outbox)
 {
     static char msg[160];
     if (draft.method == 0) {
-        if (!strchr(draft.recipient_email, '@')) return "Please enter a valid recipient email address.";
+        if (!valid_email(draft.recipient_email)) return "Please enter a valid recipient email address.";
         if (!draft.sender_name[0]) return "Your name is required.";
-        if (!strchr(draft.sender_email, '@')) return "A valid sender email is required for verification.";
+        if (!valid_email(draft.sender_email)) return "A valid sender email is required for verification.";
         if (!draft.picture_jpeg) return draft.doodle ? "Please draw a doodle for your card." : "Please choose a picture for your card.";
     } else {
         if (!outbox && !meta.wii_enabled) return "Wii delivery isn't set up yet. Please check back soon.";
@@ -826,7 +867,7 @@ static void go_review(void)
     if (preview_version != version) {
         pending_review = 1;
         busy_modal = 1;
-        if (!api.busy) request_preview();
+        if (!api_waiting()) request_preview();
         return;
     }
     review_page = 0;
@@ -842,12 +883,17 @@ static void start_send(void)
         show_alert(err, 1);
         return;
     }
+    if (api_waiting()) {
+        queue_action(F_SEND);
+        return;
+    }
     char *body = draft_json(1);
     if (!body) {
         show_alert("The Wii U ran out of memory.", 1);
         return;
     }
     if (api_send(body)) busy_modal = 1;
+    else show_alert("Could not start sending. Please try again.", 1);
 }
 
 static void picked_friend(int value)
@@ -913,8 +959,12 @@ static void send_from_outbox(void)
     const char *lh_id = draft.letterhead >= 0 ? meta.letterheads[draft.letterhead].id : NULL;
     if (lh_id && (!lh_arc || strcmp(lh_arc_id, lh_id))) {
         /* fetch the letterhead first; this runs again when it arrives */
-        if (api.busy || !api_letterhead_arc(lh_id)) {
-            show_alert("Still busy. Please try again in a moment.", 1);
+        if (api_waiting()) {
+            queue_action(F_OUTBOX);
+            return;
+        }
+        if (!api_letterhead_arc(lh_id)) {
+            show_alert("Could not download the letterhead. Please try again.", 1);
             return;
         }
         snprintf(lh_arc_id, sizeof lh_arc_id, "%s", lh_id);
@@ -984,6 +1034,7 @@ static void activate(int id)
         if (!wii_number[0])
             show_alert(nand_available() ? "Wii mode has no Wii Number yet. Set up WiiConnect24 in the Wii Menu, or add PictoCard from the Message Board's address book."
                                         : nand_error(), 1);
+        else if (api_waiting()) queue_action(F_FRIEND);
         else if (api_friend(wii_number)) busy_modal = 1;
         break;
     case F_REVIEW: go_review(); break;
@@ -992,6 +1043,7 @@ static void activate(int id)
     case F_EDIT: screen = SCR_COMPOSE; focus = F_REVIEW; break;
     case F_VERIFY_SEND:
         if (strlen(verify_code) != 6) show_alert("Enter the 6-digit code from the email.", 1);
+        else if (api_waiting()) queue_action(F_VERIFY_SEND);
         else if (api_verify(verify_ticket, verify_code)) busy_modal = 1;
         break;
     case F_VERIFY_BACK: screen = SCR_REVIEW; focus = F_SEND; break;
@@ -1657,7 +1709,8 @@ static void draw_busy(void)
 {
     ui_dim();
     int w = 420, h = 150, x = (SW - w) / 2, y = (SH - h) / 2;
-    int top = ui_panel(x, y, w, h, NULL, api.job == JOB_FRIEND ? "Sending a friend request" : pending_review ? "Getting your card ready" : "Sending your card");
+    int top = ui_panel(x, y, w, h, NULL, (queued_action ? queued_action == F_FRIEND : api.job == JOB_FRIEND) ? "Sending a friend request"
+                                           : pending_review ? "Getting your card ready" : "Sending your card");
     const char *stage = "Working...";
     switch (api.stage) {
     case STAGE_CHALLENGE: stage = "Getting an anti-spam check..."; break;
@@ -1665,9 +1718,11 @@ static void draw_busy(void)
     case STAGE_UPLOADING: stage = pending_review ? "Drawing your card..." : "Uploading your card..."; break;
     case STAGE_WAITING: stage = "Waiting for PictoCard..."; break;
     }
+    /* waiting for a background request to finish before this one starts */
+    if (queued_action) stage = "One moment...";
     ui_spinner(x + 34, top + 34, 12, T.accent, frame);
     text_draw_fit(FONT_BOLD, 14, x + 60, top + 22, w - 76, T.text, stage);
-    if (api.stage == STAGE_SOLVING || api.stage == STAGE_UPLOADING) {
+    if (!queued_action && (api.stage == STAGE_SOLVING || api.stage == STAGE_UPLOADING)) {
         gfx_round(x + 60, top + 56, w - 80, 10, 5, T.elev);
         int pw = (w - 80) * api.progress / 100;
         if (pw > 0) {
@@ -1705,8 +1760,8 @@ static void handle_finished(void)
             draft.font = 0;
             for (int i = 0; i < meta.font_count; i++)
                 if (!strcmp(meta.fonts[i].id, "rodinntlg")) draft.font = i;
-            if (strcmp(meta.min_client, APP_VERSION) > 0)
-                show_alert("A newer PictoCard for Wii U is available. Download it from pictocard.net/wii-app.", 1);
+            if (version_newer(meta.min_client, APP_VERSION))
+                show_alert("A newer PictoCard for Wii U is available. Download it from pictocard.net/app.", 1);
             arrange_letterheads();
             draft_changed();
         }
@@ -1839,6 +1894,23 @@ static void play_sounds(const input_t *in, int modal_was, int hover_was, int scr
     }
 }
 
+static void draw_alert(void)
+{
+    int w = SW > 700 ? 600 : 520, x = (SW - w) / 2;
+    int h = ui_alert_height(w, alert_text);
+    int y = SH - 44 - h;
+    gfx_round(x, y + 3, w, h, RADIUS, T.shadow);
+    gfx_fill(x, y, w, h, T.bg);
+    ui_alert(x, y, w, alert_text, alert_error);
+}
+
+/* Something is being written or sent that leaving now would throw away. */
+static int card_in_progress(void)
+{
+    if (screen == SCR_CONNECT || screen == SCR_DONE) return 0;
+    return draft.message[0] || draft.card_text[0] || draft.picture_jpeg || busy_modal || modal_id();
+}
+
 void app_run(void)
 {
     layout_columns();
@@ -1860,10 +1932,22 @@ void app_run(void)
         frame++;
         input_touch_draws(doodle_active());
         input_poll(&in);
-        if (in.down & BTN_HOME) break;
+        if (in.down & BTN_HOME) {
+            /* With a card in progress the first press asks: one stray press used to throw it away. */
+            if (!card_in_progress() || (exit_prompt && alert_frames > 0)) break;
+            show_alert("Press HOME again to exit. Your card has not been sent yet.", 1);
+            exit_prompt = 1;
+            in.down &= ~BTN_HOME;
+        }
         if (input_quit_requested()) break;
         int modal_was = modal_id(), hover_was = hover_key(modal_was), screen_was = screen;
         if (api.finished) handle_finished();
+        if (queued_action && !api_waiting()) {
+            int id = queued_action;
+            queued_action = 0;
+            busy_modal = 0;
+            activate(id);
+        }
         if (pending_source >= 0 && !picker_active()) {
             int source = pending_source;
             pending_source = -1;
@@ -1903,18 +1987,23 @@ void app_run(void)
         play_sounds(&in, modal_was, hover_was, screen_was);
         if (alert_frames > 0 && (in.down & ~BTN_DIRS) && !busy_modal) alert_frames = alert_frames > 60 ? 60 : alert_frames;
 
-        /* live preview: redraw on the server shortly after the draft settles */
-        if (screen == SCR_COMPOSE && meta.loaded && !api.busy && version != preview_version &&
-            requested_version != version && frame - changed_frame > 50)
-            request_preview();
-        if (pending_review && !api.busy && requested_version != version) request_preview();
-        /* letterhead thumbnails, then Mii faces, after the live preview */
-        if (gallery_active() || (screen == SCR_COMPOSE && !api.busy && !pending_review &&
-                                 (version == preview_version || requested_version == version)))
-            request_letterheads();
-        /* Mii faces go last so the live preview always comes first */
-        if (screen == SCR_COMPOSE && !api.busy && !pending_review && (version == preview_version || requested_version == version))
-            request_faces();
+        /* Background requests. A result that arrived during this frame is collected at the top
+         * of the next one; starting another request first would overwrite it (the preview then
+         * never appeared, or its picture was never freed). */
+        if (!api.finished) {
+            /* live preview: redraw on the server shortly after the draft settles */
+            if (screen == SCR_COMPOSE && meta.loaded && !api.busy && version != preview_version &&
+                requested_version != version && frame - changed_frame > 50)
+                request_preview();
+            if (pending_review && !api.busy && requested_version != version) request_preview();
+            /* letterhead thumbnails, then Mii faces, after the live preview */
+            if (gallery_active() || (screen == SCR_COMPOSE && !api.busy && !pending_review &&
+                                     (version == preview_version || requested_version == version)))
+                request_letterheads();
+            /* Mii faces go last so the live preview always comes first */
+            if (screen == SCR_COMPOSE && !api.busy && !pending_review && (version == preview_version || requested_version == version))
+                request_faces();
+        }
 
         build_widgets();
         if (!find(focus) && screen == SCR_COMPOSE && focus != F_REVIEW) focus = F_METHOD;
@@ -1939,12 +2028,7 @@ void app_run(void)
         }
         if (alert_frames > 0) {
             alert_frames--;
-            int w = SW > 700 ? 600 : 520, x = (SW - w) / 2;
-            int h = ui_alert_height(w, alert_text);
-            int y = SH - 44 - h;
-            gfx_round(x, y + 3, w, h, RADIUS, T.shadow);
-            gfx_fill(x, y, w, h, T.bg);
-            ui_alert(x, y, w, alert_text, alert_error);
+            draw_alert();
         }
         if (osk_active()) osk_draw(frame);
         else if (gallery_active()) gallery_draw(frame);
@@ -1953,6 +2037,8 @@ void app_run(void)
         else if (doodle_active()) doodle_draw(frame);
         else if (camera_active()) camera_draw(frame);
         if (busy_modal) draw_busy();
+        /* the exit question is asked over whatever is open, not behind it */
+        if (exit_prompt && alert_frames > 0 && (modal_id() || busy_modal)) draw_alert();
 
 #ifdef AUTOTEST
         {

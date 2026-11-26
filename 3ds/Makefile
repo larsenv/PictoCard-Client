@@ -80,13 +80,13 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS	:= -lmbedtls -lcitro2d -lcitro3d -lctru -lm
+LIBS	:= -l3dsupdate -lmbedtls -lcitro2d -lcitro3d -lctru -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
 # include and lib
 #---------------------------------------------------------------------------------
-LIBDIRS	:= $(CTRULIB) $(TOPDIR)/portlibs/3ds
+LIBDIRS	:= $(TOPDIR)/lib3dsupdate $(CTRULIB) $(TOPDIR)/portlibs/3ds
 
 
 #---------------------------------------------------------------------------------
@@ -187,8 +187,12 @@ endif
 all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(ROMFS_T3XFILES) $(T3XHFILES)
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
-$(BUILD):
+$(BUILD): lib3dsupdate-lib
 	@mkdir -p $@
+
+.PHONY: lib3dsupdate-lib
+lib3dsupdate-lib:
+	@$(MAKE) --no-print-directory -C $(CURDIR)/lib3dsupdate
 
 ifneq ($(GFXBUILD),$(BUILD))
 $(GFXBUILD):

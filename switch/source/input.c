@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <math.h>
 #include <SDL2/SDL.h>
+#include <switch.h>
+#include <input_switch.h>
 #include "input.h"
 
 #define REPEAT_DELAY 22 /* frames before a held direction repeats */
@@ -13,7 +15,7 @@ static int dir_frames;
 static int quit_requested;
 
 /* the touch screen (handheld mode) */
-static PadState pad;
+static u32 prev_held;
 static int touch_down, touch_release, touch_x, touch_y;
 static int touch_start_x, touch_start_y, touch_dragged;
 int input_drawing; /* a touch holds A (the doodle pad) instead of tapping */
@@ -38,74 +40,28 @@ static u32 map_pad(u64 b)
     return out;
 }
 
-/* ── USB keyboard (through SDL) ──────────────────────────────────────────── */
+/* ── USB keyboard (through libswitchinput) ───────────────────────────────── */
 
-#define KEYQ 64
-static key_event keyq[KEYQ];
-static int keyq_head, keyq_tail;
-static int keyboard_seen;
-
-static const char plain[] =   "abcdefghijklmnopqrstuvwxyz1234567890\n\x1b\b\t -=[]\\#;'`,./";
-static const char shifted[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()\n\x1b\b\t _+{}|~:\"~<>?";
-
-static char key_char(u8 code, int shift, int caps)
+int input_key(key_event *ev)
 {
-    if (code >= 0x04 && code <= 0x38) {
-        char c = (shift ? shifted : plain)[code - 0x04];
-        if (code <= 0x1D && caps) c = (c >= 'a' && c <= 'z') ? c - 32 : c + 32;
-        return (c >= 0x20 && c < 0x7F) ? c : 0;
-    }
-    switch (code) {
-    case 0x54: return '/';
-    case 0x55: return '*';
-    case 0x56: return '-';
-    case 0x57: return '+';
-    case 0x62: return '0';
-    case 0x63: return '.';
-    }
-    if (code >= 0x59 && code <= 0x61) return '1' + (code - 0x59);
-    return 0;
+    input_key_event k;
+    if (!INPUT_KeyPop(&k)) return 0;
+    ev->code = k.code;
+    ev->shift = (k.mods & INPUT_MOD_SHIFT) != 0;
+    ev->ctrl = (k.mods & INPUT_MOD_CTRL) != 0;
+    ev->ch = ev->ctrl ? 0 : k.ch;
+    return 1;
 }
 
-static void push_key(u8 code, char ch, int shift, int ctrl)
-{
-    int next = (keyq_head + 1) % KEYQ;
-    if (next == keyq_tail) return; /* full */
-    key_event *ev = &keyq[keyq_head];
-    ev->code = code;
-    ev->ch = ch;
-    ev->shift = shift;
-    ev->ctrl = ctrl;
-    keyq_head = next;
-}
-
-static void key_down(const SDL_KeyboardEvent *k)
-{
-    u8 code = (u8)k->keysym.scancode;
-    if (k->keysym.scancode > 0xFF || code >= 0xE0 || code == 0x39) return; /* modifiers, Caps Lock */
-    keyboard_seen = 1;
-    int shift = (k->keysym.mod & KMOD_SHIFT) != 0, ctrl = (k->keysym.mod & KMOD_CTRL) != 0;
-    int caps = (k->keysym.mod & KMOD_CAPS) != 0;
-    push_key(code, ctrl ? 0 : key_char(code, shift, caps), shift, ctrl);
-}
+int input_keyboard_connected(void) { return INPUT_KeyboardConnected(); }
 
 #ifdef AUTOTEST
 void autotest_push_key(u8 code, char ch)
 {
-    push_key(ch == '\n' ? KEY_ENTER : code, ch == '\n' ? 0 : ch, 0, 0);
+    (void)code; (void)ch;
 }
 void autotest_apply(input_t *in);
 #endif
-
-int input_key(key_event *ev)
-{
-    if (keyq_tail == keyq_head) return 0;
-    *ev = keyq[keyq_tail];
-    keyq_tail = (keyq_tail + 1) % KEYQ;
-    return 1;
-}
-
-int input_keyboard_connected(void) { return keyboard_seen; }
 
 int input_quit_requested(void) { return quit_requested; }
 
@@ -113,49 +69,50 @@ int input_quit_requested(void) { return quit_requested; }
 
 void input_init(void)
 {
-    padConfigureInput(8, HidNpadStyleSet_NpadStandard);
-    padInitializeDefault(&pad);
-    hidInitializeTouchScreen();
+    INPUT_Init();
+    INPUT_SetScreenSize(canvas_w, canvas_h);
 }
 
 void input_set_canvas(int width, int height)
 {
     canvas_w = width;
     canvas_h = height;
+    INPUT_SetScreenSize(width, height);
 }
 
 void input_touch_draws(int on) { input_drawing = on; }
 
-void input_shutdown(void) {}
+void input_shutdown(void) { INPUT_Shutdown(); }
 
 void input_poll(input_t *in)
 {
     u32 down = 0, held = 0;
 
     SDL_Event e;
-    while (SDL_PollEvent(&e)) {
+    while (SDL_PollEvent(&e))
         if (e.type == SDL_QUIT) quit_requested = 1;
-        else if (e.type == SDL_KEYDOWN) key_down(&e.key);
-    }
     if (!appletMainLoop()) quit_requested = 1; /* the system asked the app to close */
 
     in->pointer = 0;
     in->touch = in->touch_held = in->touch_began = in->touch_drag = 0;
 
     /* Every controller at once: handheld Joy-Cons, a Pro Controller, a pair of detached Joy-Cons */
-    padUpdate(&pad);
-    down |= map_pad(padGetButtonsDown(&pad));
-    held |= map_pad(padGetButtons(&pad));
+    INPUT_Update();
+    for (int i = 0, n = INPUT_DeviceCount(); i < n; i++) {
+        input_device d;
+        if (INPUT_DeviceGet(i, &d)) held |= map_pad(d.raw); /* the device's own bits: + / R and - / L are folded otherwise */
+    }
+    down |= held & ~prev_held;
+    prev_held = held;
 
     /* The touch screen: a tap (let go without dragging) is A, a drag scrolls */
-    HidTouchScreenState ts = {0};
-    int touched = hidGetTouchScreenStates(&ts, 1) > 0 && ts.count > 0;
+    int tx, ty;
+    int touched = INPUT_Touch(&tx, &ty);
     int was_down = touch_down && !touch_release;
     if (touch_release) touch_down = touch_release = 0;
     if (touched) {
-        /* touch coordinates are 1280x720 whatever the output resolution */
-        touch_x = ts.touches[0].x * canvas_w / 1280;
-        touch_y = ts.touches[0].y * canvas_h / 720;
+        touch_x = tx;
+        touch_y = ty;
         touch_down = 1;
         touch_release = 0;
     } else if (touch_down) {

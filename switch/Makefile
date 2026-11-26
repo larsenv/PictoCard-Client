@@ -49,7 +49,7 @@ ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 # SDL2's own dependencies come after it; libwebp 1.0 (the portlibs one) has no libsharpyuv
-LIBS	:=	-lmbedtls -lSDL2 -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lfreetype -lharfbuzz -lfreetype -lpng16 -lturbojpeg -lwebp \
+LIBS	:=	-lswitchupdate -lswitchinput -lmbedtls -lSDL2 -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lfreetype -lharfbuzz -lfreetype -lpng16 -lturbojpeg -lwebp \
 		-lbz2 -lz -lnx -lm -lstdc++
 
 AUTOTEST	?=	0
@@ -61,7 +61,7 @@ endif
 # list of directories containing libraries, this must be the top level
 # containing include and lib
 #-------------------------------------------------------------------------------
-LIBDIRS	:= $(TOPDIR)/portlibs/switch $(PORTLIBS) $(LIBNX)
+LIBDIRS	:= $(TOPDIR)/libswitchupdate $(TOPDIR)/libswitchinput $(TOPDIR)/portlibs/switch $(PORTLIBS) $(LIBNX)
 
 #-------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
@@ -110,6 +110,13 @@ $(BUILD):
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 #-------------------------------------------------------------------------------
+$(BUILD): libswitchupdate-lib libswitchinput-lib
+.PHONY: libswitchupdate-lib libswitchinput-lib
+libswitchupdate-lib:
+	@$(MAKE) --no-print-directory -C $(CURDIR)/libswitchupdate
+libswitchinput-lib:
+	@$(MAKE) --no-print-directory -C $(CURDIR)/libswitchinput
+
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).nro $(TARGET).nacp $(TARGET).elf dist

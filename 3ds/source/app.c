@@ -9,6 +9,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <3ds.h>
+#include <3dsupdate.h>
 #include "app.h"
 #include "api.h"
 #include "autotest.h"
@@ -1786,6 +1787,33 @@ static void live_preview(void)
     request_preview();
 }
 
+/* ── Update popup (touch screen) ─────────────────────────────────────────── */
+
+static ctrupdate_popup update_pop;
+static int update_open;
+
+static void draw_update_popup(void)
+{
+    const ctrupdate_popup *p = &update_pop;
+    float w = 280, h = p->progress >= 0 || p->detail[0] ? 156 : 130;
+    float x = (BOT_W - w) / 2, y = (SCR_H - h) / 2;
+    rect(0, 0, BOT_W, SCR_H, rgba(0x000000, 130));
+    rect(x - 2, y - 2, w + 4, h + 4, rgb(T->muted));
+    rect(x, y, w, h, rgb(0xFBFBFB));
+    text(BOT_W / 2, y + 10, 16, rgb(0x202020), C2D_AlignCenter, 0, p->title);
+    text(BOT_W / 2, y + 36, 12, rgb(0x404040), C2D_AlignCenter, w - 20, p->text);
+    float row = y + 84;
+    if (p->progress >= 0) {
+        rect(x + 24, row + 4, w - 48, 8, rgb(0xC8C8C8));
+        rect(x + 24, row + 4, (w - 48) * p->progress / 100, 8, rgb(T->muted));
+        row += 24;
+    } else if (p->detail[0]) {
+        text(BOT_W / 2, row, 11, rgb(0x0059F3), C2D_AlignCenter, w - 20, p->detail);
+        row += 24;
+    }
+    text(BOT_W / 2, row + 4, 12, rgb(0x606060), C2D_AlignCenter, w - 20, p->hint);
+}
+
 static void draw(void)
 {
     gfx_begin(rgb(T->bg), rgb(T->bg));
@@ -1807,6 +1835,7 @@ static void draw(void)
     }
     if (busy_modal || working_fn) draw_busy();
     else if (alert_frames > 0) draw_alert();
+    if (update_open) draw_update_popup();
     gfx_end();
 }
 
@@ -1840,7 +1869,12 @@ void app_run(void)
     input_t in;
     while (!quit && aptMainLoop()) {
         input_read(&in);
-        update(&in);
+        /* the update popup takes the controls while it is up, and on the frame it closes */
+        int was_open = update_open;
+        int ust = CTRUPDATE_Popup(in.down, &update_pop);
+        if (ust == CTRUPDATE_POPUP_EXIT) break;
+        update_open = ust == CTRUPDATE_POPUP_OPEN;
+        if (!update_open && !was_open) update(&in);
         live_preview();
         if (picker.active) update_pick_preview();
         draw();

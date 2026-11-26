@@ -10,3 +10,15 @@
 [submodule "wiiu/libwiiuinput"]
 	path = wiiu/libwiiuinput
 	url = https://github.com/quatric/libwiiuinput.git
+[submodule "3ds/lib3dsupdate"]
+	path = 3ds/lib3dsupdate
+	url = https://github.com/quatric/lib3dsupdate.git
+[submodule "switch/libswitchinput"]
+	path = switch/libswitchinput
+	url = https://github.com/quatric/libswitchinput.git
+[submodule "switch/libswitchupdate"]
+	path = switch/libswitchupdate
+	url = https://github.com/quatric/libswitchupdate.git
+[submodule "wiiu/libwiiuupdate"]
+	path = wiiu/libwiiuupdate
+	url = https://github.com/quatric/libwiiuupdate.git

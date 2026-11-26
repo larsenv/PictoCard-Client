@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include "platform.h"
+#include <nxupdate.h>
 #include "app.h"
 #include "api.h"
 #include "font.h"
@@ -1889,6 +1890,32 @@ static void play_sounds(const input_t *in, int modal_was, int hover_was, int scr
     }
 }
 
+/* ── Update popup ────────────────────────────────────────────────────────── */
+
+static nxupdate_popup update_pop;
+static int update_open;
+
+static void draw_update_popup(void)
+{
+    const nxupdate_popup *p = &update_pop;
+    int w = 440, h = p->progress >= 0 || p->detail[0] ? 150 : 124;
+    int x = (SW - w) / 2, y = (SH - h) / 2;
+    gfx_fill_alpha(0, 0, SW, SH, 0x000000, 130);
+    gfx_frame(x, y, w, h, 6, 0xFBFBFB, T.muted, 2);
+    text_draw_center(FONT_BOLD, 18, x, y + 14, w, 0x202020, p->title);
+    text_draw_center(FONT_REGULAR, 14, x, y + 50, w, 0x404040, p->text);
+    int row = y + 78;
+    if (p->progress >= 0) {
+        gfx_fill(x + 40, row + 4, w - 80, 10, 0xC8C8C8);
+        gfx_fill(x + 40, row + 4, (w - 80) * p->progress / 100, 10, T.muted);
+        row += 26;
+    } else if (p->detail[0]) {
+        text_draw_center(FONT_REGULAR, 14, x, row, w, 0x30BAF3, p->detail);
+        row += 26;
+    }
+    text_draw_center(FONT_REGULAR, 14, x, row + 8, w, 0x606060, p->hint);
+}
+
 static void draw_alert(void)
 {
     int w = SW > 700 ? 600 : 520, x = (SW - w) / 2;
@@ -1927,6 +1954,21 @@ void app_run(void)
         frame++;
         input_touch_draws(doodle_active());
         input_poll(&in);
+        {
+            /* The update popup takes the controls while it is up, and on the frame it closes.
+             * Only the A button answers it: a tap on the touch screen also reads as A. */
+            u32 buttons = ((in.down & BTN_A) && !in.touch ? 1 /* HidNpadButton_A */ : 0) | (in.down & BTN_B ? 2 /* HidNpadButton_B */ : 0);
+            int was_open = update_open;
+            int ust = NXUPDATE_Popup(buttons, &update_pop);
+            if (ust == NXUPDATE_POPUP_EXIT) break;
+            update_open = ust == NXUPDATE_POPUP_OPEN;
+            if (update_open || was_open) {
+                key_event ev;
+                while (input_key(&ev)) {}
+                in.down = 0;
+                in.touch_began = 0;
+            }
+        }
         if (in.down & BTN_HOME) {
             /* With a card in progress the first press asks: one stray press used to throw it away. */
             if (!card_in_progress() || (exit_prompt && alert_frames > 0)) break;
@@ -2032,6 +2074,7 @@ void app_run(void)
         else if (doodle_active()) doodle_draw(frame);
         else if (camera_active()) camera_draw(frame);
         if (busy_modal) draw_busy();
+        if (update_open) draw_update_popup();
         /* the exit question is asked over whatever is open, not behind it */
         if (exit_prompt && alert_frames > 0 && (modal_id() || busy_modal)) draw_alert();
 

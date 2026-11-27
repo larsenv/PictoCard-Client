@@ -7,7 +7,7 @@ ifeq ($(strip $(DEVKITPPC)),)
 $(error "Please set DEVKITPPC in your environment. export DEVKITPPC=<path to>devkitPPC")
 endif
 
-include $(DEVKITPPC)/wii_rules
+include $(DEVKITPRO)/libogc2/wii_rules
 
 #---------------------------------------------------------------------------------
 # TARGET is the name of the output
@@ -60,7 +60,7 @@ ifeq ($(WITH_WIIDRC),1)
 endif
 ifeq ($(WITH_WUPC),1)
  CFLAGS += -DHAVE_WUPC
- LDFLAGS += -Wl,-wrap,wiiuse_accept
+ LDFLAGS += -Wl,-wrap,wiiuse_register
  LIBS := -lwupc $(LIBS)
 endif
 ifeq ($(WITH_SICKSAXIS),1)

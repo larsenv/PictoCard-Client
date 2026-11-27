@@ -49,7 +49,7 @@ int net_start(char *ip, size_t ip_len)
         int ret = -1;
         for (int attempt = 0; attempt < 3 && ret < 0; attempt++) {
             char addr[16] = "", mask[16] = "", gw[16] = "";
-            ret = if_config(addr, mask, gw, true, 20);
+            ret = if_config(addr, mask, gw, true);
             if (ret >= 0 && ip) snprintf(ip, ip_len, "%s", addr);
         }
         if (ret < 0) return ret;

@@ -1830,10 +1830,8 @@ static void handle_finished(void)
 
 /* ── Main loop ───────────────────────────────────────────────────────────── */
 
-static void reset_cb(u32 irq, void *ctx)
+static void reset_cb(void)
 {
-    (void)irq;
-    (void)ctx;
     quit = 1;
 }
 static void power_cb(void) { quit = 2; }
